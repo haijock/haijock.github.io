@@ -50,8 +50,8 @@ echo "    ----------"
 cat "${SSH_KEY}.pub"
 echo "    ----------"
 echo ""
-read -p "    Press [Enter] after adding the Deploy Key to GitHub..."
-
+printf "%s" "    Press [Enter] after adding the Deploy Key to GitHub..."
+read _
 echo ""
 echo "==> Step 4: Cloning dotfiles to home directory..."
 cd "$HOME"
