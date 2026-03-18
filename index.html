@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Terminal // Scripts</title>
+    <style>
+        :root {
+            --glow-color: #00ff41; /* "Alien" Green */
+            --bg-color: #020502;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--glow-color);
+            font-family: 'Courier New', Courier, monospace;
+            margin: 0;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* The Scanline Overlay */
+        body::before {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), 
+                        linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            z-index: 2;
+            background-size: 100% 4px, 3px 100%;
+            pointer-events: none;
+        }
+
+        /* Subtle Screen Flicker */
+        @keyframes flicker {
+            0% { opacity: 0.97; }
+            5% { opacity: 0.95; }
+            10% { opacity: 0.99; }
+            100% { opacity: 1; }
+        }
+
+        .container {
+            position: relative;
+            z-index: 3;
+            animation: flicker 0.15s infinite;
+            border: 1px solid var(--glow-color);
+            padding: 2.5rem;
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.2), inset 0 0 10px rgba(0, 255, 65, 0.1);
+            background: rgba(0, 40, 0, 0.1);
+            text-shadow: 0 0 8px var(--glow-color);
+        }
+
+        h1 { font-size: 1.5rem; margin-top: 0; }
+        code { background: rgba(0, 255, 65, 0.1); padding: 4px 8px; border-radius: 3px; }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>> SYSTEM_READY</h1>
+        <p>Run: <code>curl -sSL https://haijock.github.io | sh</code></p>
+    </div>
+</body>
+</html>
