@@ -42,7 +42,7 @@ print_pat_instructions() {
     echo "    (PAT) is required. A token with NO scopes is sufficient for public"
     echo "    repos and provides the highest rate limit (5,000 requests/hr)."
     echo ""
-    echo "    1. Go to: https://github.com/settings/tokens/new?description=mise&expiration=90"
+    echo "    1. Go to: https://github.com/settings/tokens/new?description=mise-$(hostname)&expiration=90"
     echo "    2. Select token type: Tokens (classic)"
     echo "    3. Do NOT select any scopes (not required)"
     echo "    4. Click 'Generate token'"
