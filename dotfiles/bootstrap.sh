@@ -35,9 +35,39 @@ print_key_instructions() {
     exit 1
 }
 
+print_pat_instructions() {
+    echo "==> GitHub Personal Access Token Required"
+    echo ""
+    echo "    To prevent mise from being rate-limited, a GitHub Personal Access Token"
+    echo "    (PAT) is required. A token with NO scopes is sufficient for public"
+    echo "    repos and provides the highest rate limit (5,000 requests/hr)."
+    echo ""
+    echo "    1. Go to: https://github.com/settings/tokens/new?description=mise&expiration=90"
+    echo "    2. Select token type: Tokens (classic)"
+    echo "    3. Do NOT select any scopes (not required)"
+    echo "    4. Click 'Generate token'"
+    echo "    5. Copy the token immediately (you won't see it again)"
+    echo "    6. Store it in 1Password: Private/GitHub/mise"
+    echo "    7. Open ~/.env and replace the placeholder with your token"
+    echo "    8. Rerun this script"
+    echo ""
+    exit 1
+}
+
 SSH_KEY="$HOME/.ssh/id_ed25519_bootstrap"
 
-echo "==> Step 1: Installing mise..."
+echo "==> Step 1: GitHub Personal Access Token Setup"
+touch "$HOME/.env"
+if ! grep -q '^MISE_GITHUB_TOKEN=' "$HOME/.env" 2>/dev/null; then
+    echo 'MISE_GITHUB_TOKEN=<ADD GITHUB PERSONAL ACCESS TOKEN HERE>' >> "$HOME/.env"
+    echo "    Added placeholder token to ~/.env"
+    echo ""
+    print_pat_instructions
+fi
+echo "    MISE_GITHUB_TOKEN is set"
+echo ""
+
+echo "==> Step 2: Installing mise..."
 if [ -f "$HOME/.local/bin/mise" ]; then
     echo "    mise already installed"
 else
@@ -48,7 +78,7 @@ export PATH="$HOME/.local/bin:$PATH"
 echo "    mise installed"
 echo ""
 
-echo "==> Step 2: SSH Key Setup"
+echo "==> Step 3: SSH Key Setup"
 mkdir -p "$HOME/.ssh"
 
 if [ ! -f "$SSH_KEY" ]; then
@@ -71,7 +101,7 @@ else
 fi
 echo ""
 
-echo "==> Step 3: Cloning dotfiles to home directory..."
+echo "==> Step 4: Cloning dotfiles to home directory..."
 cd "$HOME"
 
 (
@@ -93,7 +123,7 @@ cd "$HOME"
 
 echo ""
 
-echo "==> Step 4: Running mise bootstrap..."
+echo "==> Step 5: Running mise bootstrap..."
 echo ""
 mise run dotfiles:bootstrap
 
