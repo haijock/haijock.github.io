@@ -74,18 +74,23 @@ echo ""
 echo "==> Step 3: Cloning dotfiles to home directory..."
 cd "$HOME"
 
-if [ -d "$HOME/.git" ]; then
-    echo "    Git already initialized, fetching updates..."
-    git fetch origin
-else
-    echo "    Initializing git repository..."
-    git init
-    git remote add origin git@github.com:haijock/dotfiles.git
-    git fetch origin
-fi
+(
+    export GIT_SSH_COMMAND="ssh -i $SSH_KEY -o IdentitiesOnly=yes"
 
-echo "    Checking out dotfiles (branch: wip)..."
-git reset --hard origin/wip
+    if [ -d "$HOME/.git" ]; then
+        echo "    Git already initialized, fetching updates..."
+        git fetch origin
+    else
+        echo "    Initializing git repository..."
+        git init
+        git remote add origin git@github.com:haijock/dotfiles.git
+        git fetch origin
+    fi
+
+    echo "    Checking out dotfiles (branch: wip)..."
+    git reset --hard origin/wip
+)
+
 echo ""
 
 echo "==> Step 4: Running mise bootstrap..."
