@@ -204,61 +204,47 @@
             color: var(--glow-color);
             font-size: 0.75rem;
             opacity: 0;
-            background: rgba(0, 20, 0, 0.95);
+            background: transparent;
             padding: 8px 16px;
-            border: 1px solid var(--glow-color);
-            box-shadow: 0 0 30px rgba(0, 255, 65, 0.5);
+            border: none;
             pointer-events: none;
             white-space: nowrap;
-            overflow: hidden;
+            font-family: inherit;
+            letter-spacing: 2px;
         }
 
-        .copied::before {
-            content: "> $ ";
-            opacity: 0.5;
+        .copied .hex,
+        .copied .final {
+            display: none;
+            text-shadow: 0 0 15px var(--glow-color);
         }
 
-        .copied .hex {
+        .copied.scrambling .hex {
             display: inline;
         }
 
-        .copied .final {
-            display: none;
-            text-shadow: 0 0 10px var(--glow-color);
+        .copied.done .final {
+            display: inline;
             animation: glowPulse 0.3s ease-out;
         }
 
-        .copied.show .hex {
-            display: none;
-        }
-
-        .copied.show .final {
-            display: inline;
-        }
-
-        .copied.show {
+        .copied.scrambling,
+        .copied.done {
             opacity: 1;
-            animation: scanReveal 0.4s steps(8);
+        }
+
+        .copied.scrambling {
+            animation: scanReveal 0.1s steps(1) infinite;
         }
 
         @keyframes scanReveal {
-            0% {
-                clip-path: inset(0 100% 0 0);
-                opacity: 1;
-            }
-            50% {
-                clip-path: inset(0 0 0 0);
-                opacity: 1;
-            }
-            100% {
-                clip-path: inset(0 0 0 0);
-                opacity: 1;
-            }
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
         }
 
         @keyframes glowPulse {
-            0% { text-shadow: 0 0 20px var(--glow-color), 0 0 40px var(--glow-color); }
-            100% { text-shadow: 0 0 10px var(--glow-color); }
+            0% { text-shadow: 0 0 30px var(--glow-color), 0 0 60px var(--glow-color); }
+            100% { text-shadow: 0 0 15px var(--glow-color); }
         }
 
         /* Vignette corners */
@@ -289,8 +275,8 @@
         <p>Run:<br>
         <code onclick="copyCommand(this)">curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash
         <span class="copied">
-            <span class="hex">0x[C0][P1][13][Y2]</span>
-            <span class="final">COPIED</span>
+            <span class="hex">[--][--][--][--]</span>
+            <span class="final">>> OK</span>
         </span></code>
         </p>
     </div>
@@ -303,27 +289,29 @@
             
             const chars = '0123456789ABCDEF';
             let iterations = 0;
-            const maxIterations = 6;
+            const maxIterations = 8;
             
             function scramble() {
                 let text = '';
-                for (let i = 0; i < 6; i++) {
+                for (let i = 0; i < 4; i++) {
                     text += '[' + chars[Math.floor(Math.random() * chars.length)] + chars[Math.floor(Math.random() * chars.length)] + ']';
                 }
                 hex.textContent = text;
                 
                 iterations++;
                 if (iterations < maxIterations) {
-                    setTimeout(scramble, 40);
+                    setTimeout(scramble, 50);
+                } else {
+                    copied.classList.remove('scrambling');
+                    copied.classList.add('done');
+                    setTimeout(() => copied.classList.remove('done'), 1200);
                 }
             }
             
-            scramble();
-            copied.classList.add('show');
-            
-            setTimeout(() => {
-                copied.classList.remove('show');
-            }, 1500);
+            navigator.clipboard.writeText(cmd).then(() => {
+                copied.classList.add('scrambling');
+                scramble();
+            });
         }
     </script>
 </body>
