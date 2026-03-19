@@ -163,10 +163,17 @@
             line-height: 2;
         }
 
+        .prompt-area {
+            height: 3.6rem;
+            position: relative;
+        }
+
         .prompt-line {
             font-size: 1.8rem;
             line-height: 2;
-            margin-top: 0.5rem;
+            position: absolute;
+            top: 0;
+            left: 0;
         }
 
         .prompt-line .cursor {
@@ -242,8 +249,10 @@
     <div class="noise"></div>
     <div class="container">
         <div class="status-line">SYSTEM_READY</div>
-        <div class="prompt-line">
-            > <span class="cursor">_</span>
+        <div class="prompt-area">
+            <div class="prompt-line">
+                > <span class="cursor">_</span>
+            </div>
         </div>
         <p>Run:<br>
         <code onclick="copyCommand(this)">curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash</code>
