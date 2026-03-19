@@ -136,7 +136,8 @@
             height: 320px;
             display: flex;
             flex-direction: column;
-            justify-content: center;
+            justify-content: flex-start;
+            padding-top: 2.5rem;
             background: rgba(0, 15, 0, 0.4);
             box-shadow: 
                 0 0 60px rgba(0, 255, 65, 0.15),
@@ -155,45 +156,31 @@
             51%, 100% { opacity: 0; }
         }
 
-        h1 { 
-            font-size: 1.8rem; 
-            margin: 0;
+        .status-line {
+            font-size: 1.8rem;
             font-weight: normal;
             animation: chroma 3s ease-in-out infinite;
             line-height: 2;
         }
 
-        h1 .prompt-line {
-            display: block;
+        .prompt-line {
+            font-size: 1.8rem;
+            line-height: 2;
+            margin-top: 0.5rem;
         }
 
-        h1 .prompt-line:last-child span.cursor {
+        .prompt-line .cursor {
             animation: blink 1s step-end infinite;
         }
 
         .term-output {
+            display: none;
             font-size: 1.8rem;
             line-height: 2;
-            opacity: 0;
-            visibility: hidden;
-            position: absolute;
-            left: 4rem;
-            top: calc(50% + 2rem);
-            transform: translateY(-50%);
-            transition: opacity 0.2s;
-        }
-
-        .term-output.show {
-            opacity: 1;
-            visibility: visible;
         }
 
         .term-output .cmd {
             color: var(--glow-color);
-        }
-
-        .term-output .cmd span {
-            display: inline;
         }
 
         .term-output .cmd span.cursor {
@@ -217,11 +204,6 @@
         .term-output .result .done {
             color: var(--glow-color);
             text-shadow: 0 0 15px var(--glow-color), 0 0 30px var(--glow-color);
-        }
-
-        @keyframes glowPulse {
-            0% { text-shadow: 0 0 30px var(--glow-color), 0 0 60px var(--glow-color); }
-            100% { text-shadow: 0 0 15px var(--glow-color), 0 0 30px var(--glow-color); }
         }
 
         p {
@@ -278,12 +260,12 @@
     <div class="vignette"></div>
     <div class="noise"></div>
     <div class="container">
-        <h1>
-            <span class="prompt-line">SYSTEM_READY</span>
-            <span class="prompt-line">> <span class="cursor">_</span></span>
-        </h1>
+        <div class="status-line">SYSTEM_READY</div>
+        <div class="prompt-line">
+            > <span class="cursor">_</span>
+        </div>
         <div class="term-output" id="term-output">
-            <div class="cmd">> <span id="type-cmd"></span><span class="cursor">_</span></div>
+            > <span id="type-cmd"></span><span class="cursor">_</span>
             <div class="result">
                 <span class="copying" id="type-copying"></span><span class="dots" id="type-dots"></span><span class="done" id="type-done"></span>
             </div>
@@ -324,6 +306,7 @@
 
         function copyCommand(el) {
             const cmd = 'curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash';
+            const cursor = document.querySelector('.prompt-line .cursor');
             const termOutput = document.getElementById('term-output');
             const typeCmd = document.getElementById('type-cmd');
             const typeCopying = document.getElementById('type-copying');
@@ -337,7 +320,9 @@
             typeDone.textContent = '';
             
             navigator.clipboard.writeText(cmd).then(() => {
-                termOutput.classList.add('show');
+                // Hide cursor, show term-output
+                cursor.style.display = 'none';
+                termOutput.style.display = 'block';
                 
                 // Type "> INITIATE COPY"
                 typeText(typeCmd, "INITIATE COPY", 80, function() {
@@ -353,7 +338,8 @@
                 
                 // Reset after animation
                 setTimeout(() => {
-                    termOutput.classList.remove('show');
+                    termOutput.style.display = 'none';
+                    cursor.style.display = 'inline';
                 }, 2500);
             });
         }
