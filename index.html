@@ -202,20 +202,63 @@
             left: 50%;
             transform: translate(-50%, -50%);
             color: var(--glow-color);
-            font-size: 0.85rem;
+            font-size: 0.75rem;
             opacity: 0;
-            transition: opacity 0.3s;
-            text-shadow: 0 0 15px var(--glow-color);
             background: rgba(0, 20, 0, 0.95);
             padding: 8px 16px;
             border: 1px solid var(--glow-color);
             box-shadow: 0 0 30px rgba(0, 255, 65, 0.5);
             pointer-events: none;
             white-space: nowrap;
+            overflow: hidden;
+        }
+
+        .copied::before {
+            content: "> $ ";
+            opacity: 0.5;
+        }
+
+        .copied .hex {
+            display: inline;
+        }
+
+        .copied .final {
+            display: none;
+            text-shadow: 0 0 10px var(--glow-color);
+            animation: glowPulse 0.3s ease-out;
+        }
+
+        .copied.show .hex {
+            display: none;
+        }
+
+        .copied.show .final {
+            display: inline;
         }
 
         .copied.show {
             opacity: 1;
+            animation: scanReveal 0.4s steps(8);
+        }
+
+        @keyframes scanReveal {
+            0% {
+                clip-path: inset(0 100% 0 0);
+                opacity: 1;
+            }
+            50% {
+                clip-path: inset(0 0 0 0);
+                opacity: 1;
+            }
+            100% {
+                clip-path: inset(0 0 0 0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes glowPulse {
+            0% { text-shadow: 0 0 20px var(--glow-color), 0 0 40px var(--glow-color); }
+            100% { text-shadow: 0 0 10px var(--glow-color); }
         }
 
         /* Vignette corners */
@@ -244,18 +287,43 @@
     <div class="container">
         <h1>SYSTEM_READY<br>> <span>_</span></h1>
         <p>Run:<br>
-        <code onclick="copyCommand(this)">curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash<span class="copied" id="copied">>> COPIED</span></code>
+        <code onclick="copyCommand(this)">curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash
+        <span class="copied">
+            <span class="hex">0x[C0][P1][13][Y2]</span>
+            <span class="final">COPIED</span>
+        </span></code>
         </p>
     </div>
 
     <script>
         function copyCommand(el) {
             const cmd = 'curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash';
-            navigator.clipboard.writeText(cmd).then(() => {
-                const copied = document.getElementById('copied');
-                copied.classList.add('show');
-                setTimeout(() => copied.classList.remove('show'), 1500);
-            });
+            const copied = el.querySelector('.copied');
+            const hex = copied.querySelector('.hex');
+            
+            const chars = '0123456789ABCDEF';
+            let iterations = 0;
+            const maxIterations = 6;
+            
+            function scramble() {
+                let text = '';
+                for (let i = 0; i < 6; i++) {
+                    text += '[' + chars[Math.floor(Math.random() * chars.length)] + chars[Math.floor(Math.random() * chars.length)] + ']';
+                }
+                hex.textContent = text;
+                
+                iterations++;
+                if (iterations < maxIterations) {
+                    setTimeout(scramble, 40);
+                }
+            }
+            
+            scramble();
+            copied.classList.add('show');
+            
+            setTimeout(() => {
+                copied.classList.remove('show');
+            }, 1500);
         }
     </script>
 </body>
