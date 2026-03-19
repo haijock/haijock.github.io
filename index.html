@@ -279,13 +279,20 @@
             type();
         }
 
+        // Animation timing constants (in milliseconds)
+        const INIT_MS_PER_CHAR = 80;    // Typing speed for INITIATING line
+        const COPY_MS_PER_CHAR = 100;    // Typing speed for COPYING line
+        const DOTS_MS = 800;             // Delay between dots (feels like copying is happening)
+        const BLINK_MS = 1200;           // DONE! blinks for 3 cycles
+        const BUFFER_MS = 500;          // Extra time after DONE! before reverting
+
         function animateDots(el, count, callback) {
             let i = 0;
             function dot() {
                 if (i < count) {
                     el.textContent += '.';
                     i++;
-                    setTimeout(dot, 150);
+                    setTimeout(dot, DOTS_MS);
                 } else {
                     if (callback) callback();
                 }
@@ -300,11 +307,11 @@
             
             navigator.clipboard.writeText(cmd).then(() => {
                 // Calculate timing based on command length
-                const initTime = ("INITIATING " + command.toUpperCase()).length * 80;
-                const copyTime = 7 * 100;
-                const dotsTime = 3 * 150;
-                const blinkTime = 1200;
-                const buffer = 500;
+                const initTime = ("INITIATING " + command.toUpperCase()).length * INIT_MS_PER_CHAR;
+                const copyTime = 7 * COPY_MS_PER_CHAR;
+                const dotsTime = 3 * DOTS_MS;
+                const blinkTime = BLINK_MS;
+                const buffer = BUFFER_MS;
                 const totalTime = initTime + copyTime + dotsTime + blinkTime + buffer;
                 
                 // Replace with animation - cursor only appears after DONE! blinks
