@@ -73,8 +73,8 @@ if [ ! -f "$HOME/.local/bin/mise" ]; then
     echo 'eval "$(~/.local/bin/mise activate bash)"' >> ~/.bashrc
 fi
 
-eval "$(~/.local/bin/mise activate bash)"
-cd .  # Trigger reloading the new envs
+export PATH="$HOME/.local/bin:$PATH"
+eval "$(~/.local/bin/mise activate bash)" || true
 echo "    mise installed"
 echo ""
 
@@ -92,7 +92,7 @@ echo "    Bootstrap key exists: $SSH_KEY"
 echo ""
 
 echo "    Testing SSH connection to GitHub..."
-SSH_TEST=$(ssh -T -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o ConnectTimeout=10 -i "$SSH_KEY" git@github.com 2>&1)
+SSH_TEST=$(ssh -T -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o ConnectTimeout=10 -i "$SSH_KEY" git@github.com 2>&1) || true
 if echo "$SSH_TEST" | grep -q "successfully authenticated"; then
     echo "    SSH key accepted by GitHub"
 else
