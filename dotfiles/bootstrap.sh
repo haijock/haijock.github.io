@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -x
 
 if [ ! -t 0 ]; then
     set +e
@@ -7,7 +7,8 @@ if [ ! -t 0 ]; then
     set -e
 fi
 
-echo "==> Dotfiles Bootstrap" && echo "DEBUG: made it past header"
+set +x
+echo "==> Dotfiles Bootstrap"
 echo ""
 
 DETECTED_OS=""
