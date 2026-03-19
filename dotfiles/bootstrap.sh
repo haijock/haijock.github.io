@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 set -e
 
+SCRIPT_VERSION="2"
+
 if [ ! -t 0 ]; then
     set +e
     (true) < /dev/null
     set -e
 fi
 
-echo "==> Dotfiles Bootstrap"
+echo "==> Dotfiles Bootstrap (v$SCRIPT_VERSION)"
 echo ""
 
 DETECTED_OS=""
@@ -98,9 +100,7 @@ echo "    Bootstrap key exists: $SSH_KEY"
 echo ""
 
 echo "    Testing SSH connection to GitHub..."
-echo "DEBUG: About to run SSH test" >&2
 SSH_TEST=$(ssh -T -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o ConnectTimeout=10 -i "$SSH_KEY" git@github.com 2>&1) || true
-echo "DEBUG: SSH test completed, result: [$SSH_TEST]" >&2
 if echo "$SSH_TEST" | grep -q "successfully authenticated"; then
     echo "    SSH key accepted by GitHub"
 else
