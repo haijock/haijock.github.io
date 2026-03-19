@@ -5,12 +5,17 @@
     <title>Terminal // Scripts</title>
     <style>
         :root {
-            --glow-color: #00ff41; /* "Alien" Green */
-            --bg-color: #020502;
+            --glow-color: #00ff41;
+            --glow-color-dim: #00aa2a;
+            --bg-color: #0a0f0a;
         }
 
+        * { box-sizing: border-box; }
+
         body {
-            background-color: var(--bg-color);
+            background: 
+                radial-gradient(ellipse at center, var(--bg-color) 0%, #000000 100%);
+            background-color: #000;
             color: var(--glow-color);
             font-family: 'Courier New', Courier, monospace;
             margin: 0;
@@ -21,47 +26,166 @@
             align-items: center;
         }
 
-        /* The Scanline Overlay */
+        /* CRT phosphor screen glow */
         body::before {
-            content: " ";
-            display: block;
-            position: absolute;
-            top: 0; left: 0; bottom: 0; right: 0;
-            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), 
-                        linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
-            z-index: 2;
-            background-size: 100% 4px, 3px 100%;
+            content: "";
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: radial-gradient(ellipse 80% 60% at 50% 50%, 
+                rgba(0, 255, 65, 0.03) 0%, 
+                transparent 70%);
             pointer-events: none;
+            z-index: 1;
         }
 
-        /* Subtle Screen Flicker */
+        /* Scanlines */
+        body::after {
+            content: "";
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0, 0, 0, 0.3) 2px,
+                rgba(0, 0, 0, 0.3) 4px
+            );
+            pointer-events: none;
+            z-index: 100;
+            animation: scanlines 0.1s linear infinite;
+        }
+
+        @keyframes scanlines {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(4px); }
+        }
+
+        /* CRT flicker */
         @keyframes flicker {
-            0% { opacity: 0.97; }
-            5% { opacity: 0.95; }
-            10% { opacity: 0.99; }
-            100% { opacity: 1; }
+            0%, 100% { opacity: 1; }
+            92% { opacity: 1; }
+            93% { opacity: 0.8; }
+            94% { opacity: 1; }
+            97% { opacity: 0.9; }
+            98% { opacity: 1; }
+        }
+
+        /* RGB chromatic aberration on text */
+        @keyframes chroma {
+            0%, 100% { text-shadow: 
+                -1px 0 rgba(255, 0, 100, 0.3),
+                1px 0 rgba(0, 200, 255, 0.3),
+                0 0 15px var(--glow-color),
+                0 0 30px var(--glow-color);
+            }
+            50% { text-shadow: 
+                -2px 0 rgba(255, 0, 100, 0.4),
+                2px 0 rgba(0, 200, 255, 0.4),
+                0 0 20px var(--glow-color),
+                0 0 40px var(--glow-color);
+            }
+        }
+
+        /* Power-on animation */
+        @keyframes powerOn {
+            0% {
+                filter: brightness(0);
+                transform: scaleY(0.01);
+            }
+            30% {
+                filter: brightness(2);
+                transform: scaleY(0.01);
+            }
+            35% {
+                transform: scaleY(1);
+            }
+            50% {
+                filter: brightness(1.5);
+            }
+            100% {
+                filter: brightness(1);
+            }
         }
 
         .container {
             position: relative;
-            z-index: 3;
-            animation: flicker 0.15s infinite;
-            border: 1px solid var(--glow-color);
-            padding: 2.5rem;
-            box-shadow: 0 0 20px rgba(0, 255, 65, 0.2), inset 0 0 10px rgba(0, 255, 65, 0.1);
-            background: rgba(0, 40, 0, 0.1);
-            text-shadow: 0 0 8px var(--glow-color);
+            z-index: 10;
+            animation: flicker 4s infinite, powerOn 0.5s ease-out;
+            border: 2px solid var(--glow-color);
+            padding: 3rem 4rem;
+            background: rgba(0, 15, 0, 0.4);
+            box-shadow: 
+                0 0 60px rgba(0, 255, 65, 0.15),
+                0 0 100px rgba(0, 255, 65, 0.1),
+                inset 0 0 80px rgba(0, 255, 65, 0.05),
+                inset 0 0 2px 1px rgba(0, 255, 65, 0.3);
+            text-shadow: 
+                0 0 10px var(--glow-color),
+                0 0 20px var(--glow-color),
+                0 0 40px rgba(0, 255, 65, 0.5);
         }
 
-        h1 { font-size: 1.5rem; margin-top: 0; }
-        code { background: rgba(0, 255, 65, 0.1); padding: 4px 8px; border-radius: 3px; }
+        /* Terminal cursor blink */
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
 
+        h1 { 
+            font-size: 1.8rem; 
+            margin: 0 0 1.5rem 0;
+            font-weight: normal;
+            animation: chroma 3s ease-in-out infinite;
+        }
+
+        h1::after {
+            content: "_";
+            animation: blink 1s step-end infinite;
+            margin-left: 2px;
+        }
+
+        p {
+            font-size: 1.1rem;
+            margin: 0;
+            line-height: 1.8;
+        }
+
+        code { 
+            background: rgba(0, 255, 65, 0.08); 
+            padding: 6px 14px; 
+            border-radius: 2px;
+            border: 1px solid rgba(0, 255, 65, 0.2);
+            font-size: 0.95rem;
+            display: inline-block;
+            margin-top: 0.5rem;
+        }
+
+        /* Vignette corners */
+        .vignette {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.7) 100%);
+            pointer-events: none;
+            z-index: 99;
+        }
+
+        /* Subtle horizontal line noise */
+        .noise {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+            opacity: 0.03;
+            pointer-events: none;
+            z-index: 98;
+        }
     </style>
 </head>
 <body>
+    <div class="vignette"></div>
+    <div class="noise"></div>
     <div class="container">
         <h1>> SYSTEM_READY</h1>
-        <p>Run: <code>curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash</code></p>
+        <p>Run:<br><code>curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash</code></p>
     </div>
 </body>
 </html>
