@@ -260,7 +260,7 @@
             > <span class="cursor">_</span>
         </div>
         <p>Run:<br>
-        <code onclick="copyCommand(this)">curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash</code>
+        <code onclick="copyCommand(this, 'dotfiles bootstrapping')">curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash</code>
         </p>
     </div>
 
@@ -293,8 +293,8 @@
             dot();
         }
 
-        function copyCommand(el) {
-            const cmd = 'curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash';
+        function copyCommand(el, command) {
+            const cmd = el.textContent.trim();
             const promptLine = document.querySelector('.prompt-line');
             const originalContent = promptLine.innerHTML;
             
@@ -311,8 +311,8 @@
                 // Hide cursor initially
                 blinkCursor.style.visibility = 'hidden';
                 
-                // Type "> INITIATE COPY"
-                typeText(typeCmd, "INITIATE COPY", 80, function() {
+                // Type "> INITIATING {command}"
+                typeText(typeCmd, "INITIATING " + command.toUpperCase(), 80, function() {
                     // Type "COPYING"
                     typeText(typeCopying, "COPYING", 100, function() {
                         // Animate "..."
