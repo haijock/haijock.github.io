@@ -3,7 +3,7 @@ set -x
 
 if [ ! -t 0 ]; then
     set +e
-    exec </dev/null
+    (true) < /dev/null
     set -e
 fi
 
