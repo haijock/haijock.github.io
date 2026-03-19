@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
+set -e
 
 if [ ! -t 0 ]; then
-    exec bash "$0" "$@"
-    exit 1
+    exec 0</dev/null
 fi
-
-set -e
 
 echo "==> Dotfiles Bootstrap"
 echo ""
