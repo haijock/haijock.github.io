@@ -106,28 +106,47 @@ echo ""
 echo "==> Step 4: Cloning dotfiles to home directory..."
 cd "$HOME"
 
-(
-    export GIT_SSH_COMMAND="ssh -i $SSH_KEY -o IdentitiesOnly=yes"
+    (
+        export GIT_SSH_COMMAND="ssh -i $SSH_KEY -o IdentitiesOnly=yes"
 
-    if [ -d "$HOME/.git" ]; then
-        echo "    Git already initialized, fetching updates..."
-        git fetch origin
-    else
-        echo "    Initializing git repository..."
-        git init
-        git remote add origin git@github.com:haijock/dotfiles.git
-        git fetch origin
-    fi
+        if [ -d "$HOME/.git" ]; then
+            echo "    Git already initialized, fetching updates..."
+            git fetch origin || {
+                echo "    ERROR: Failed to fetch from origin"
+                exit 1
+            }
+        else
+            echo "    Initializing git repository..."
+            git init || {
+                echo "    ERROR: Failed to initialize git repository"
+                exit 1
+            }
+            git remote add origin git@github.com:haijock/dotfiles.git || {
+                echo "    ERROR: Failed to add remote origin"
+                exit 1
+            }
+            git fetch origin || {
+                echo "    ERROR: Failed to fetch from origin"
+                exit 1
+            }
+        fi
 
-    echo "    Checking out dotfiles (branch: wip)..."
-    git reset --hard origin/wip
-)
+        echo "    Checking out dotfiles (branch: wip)..."
+        git reset --hard origin/wip || {
+            echo "    ERROR: Failed to checkout dotfiles"
+            exit 1
+        }
+    )
 
 echo ""
 
 echo "==> Step 5: Running mise bootstrap..."
 echo ""
-mise run dotfiles:bootstrap
+mise run dotfiles:bootstrap 2>&1 || {
+    echo ""
+    echo "    Bootstrap task failed"
+    exit 1
+}
 
 echo ""
 echo "==> Bootstrap complete!"
