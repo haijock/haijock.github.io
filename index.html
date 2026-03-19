@@ -3,7 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <title>Terminal // Scripts</title>
-    <style>
+    <script>
+        // Random terminal color palette - classic CRT phosphor colors
+        const colors = [
+            { main: '#00ff41', dim: '#00aa2a', name: 'phosphor-green' },
+            { main: '#00ffff', dim: '#00aaaa', name: 'cyan' },
+            { main: '#ffb000', dim: '#aa7500', name: 'amber' },
+            { main: '#ff00ff', dim: '#aa00aa', name: 'magenta' },
+            { main: '#00aaff', dim: '#0077aa', name: 'electric-blue' },
+            { main: '#ff3366', dim: '#aa2244', name: 'hot-pink' },
+            { main: '#39ff14', dim: '#28aa0e', name: 'neon-green' },
+            { main: '#00ff88', dim: '#00aa5c', name: 'mint' }
+        ];
+        
+        const pick = colors[Math.floor(Math.random() * colors.length)];
+        document.documentElement.style.setProperty('--glow-color', pick.main);
+        document.documentElement.style.setProperty('--glow-color-dim', pick.dim);
+    </script>
+    <style id="dynamic-styles">
         :root {
             --glow-color: #00ff41;
             --glow-color-dim: #00aa2a;
