@@ -2,7 +2,9 @@
 set -e
 
 if [ ! -t 0 ]; then
-    exec 0</dev/null
+    set +e
+    exec </dev/null
+    set -e
 fi
 
 echo "==> Dotfiles Bootstrap"
