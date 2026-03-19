@@ -130,7 +130,7 @@
         .container {
             position: relative;
             z-index: 10;
-            animation: flicker 4s infinite, powerOn 2s ease-out, crtWave 8s ease-in-out infinite;
+            animation: flicker 4s infinite, powerOn 2s ease-out;
             border: 2px solid var(--glow-color);
             padding: 2.5rem 4rem;
             height: 340px;
@@ -146,25 +146,6 @@
                 0 0 10px var(--glow-color),
                 0 0 20px var(--glow-color),
                 0 0 40px rgba(0, 255, 65, 0.5);
-        }
-
-        /* CRT horizontal wave distortion */
-        @keyframes crtWave {
-            0%, 95%, 100% {
-                transform: translateX(0);
-            }
-            96% {
-                transform: translateX(-2px);
-            }
-            97% {
-                transform: translateX(2px);
-            }
-            98% {
-                transform: translateX(-1px);
-            }
-            99% {
-                transform: translateX(1px);
-            }
         }
 
         /* Terminal cursor blink */
