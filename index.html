@@ -173,35 +173,16 @@
             animation: blink 1s step-end infinite;
         }
 
-        .term-output {
-            display: none;
-            font-size: 1.8rem;
-            line-height: 2;
-        }
-
-        .term-output .cmd {
-            color: var(--glow-color);
-        }
-
-        .term-output .cmd span.cursor {
-            animation: blink 0.5s step-end infinite;
-        }
-
-        .term-output .result {
-            font-size: 1.8rem;
-            margin-top: 0.5rem;
-        }
-
-        .term-output .result .copying {
+        .prompt-line .copying {
             color: var(--glow-color-dim);
         }
 
-        .term-output .result .dots {
+        .prompt-line .dots {
             display: inline-block;
             min-width: 2.5ch;
         }
 
-        .term-output .result .done {
+        .prompt-line .done {
             color: var(--glow-color);
             text-shadow: 0 0 15px var(--glow-color), 0 0 30px var(--glow-color);
         }
@@ -264,12 +245,6 @@
         <div class="prompt-line">
             > <span class="cursor">_</span>
         </div>
-        <div class="term-output" id="term-output">
-            > <span id="type-cmd"></span><span class="cursor">_</span>
-            <div class="result">
-                <span class="copying" id="type-copying"></span><span class="dots" id="type-dots"></span><span class="done" id="type-done"></span>
-            </div>
-        </div>
         <p>Run:<br>
         <code onclick="copyCommand(this)">curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash</code>
         </p>
@@ -306,23 +281,17 @@
 
         function copyCommand(el) {
             const cmd = 'curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash';
-            const cursor = document.querySelector('.prompt-line .cursor');
-            const termOutput = document.getElementById('term-output');
-            const typeCmd = document.getElementById('type-cmd');
-            const typeCopying = document.getElementById('type-copying');
-            const typeDots = document.getElementById('type-dots');
-            const typeDone = document.getElementById('type-done');
-            
-            // Reset text
-            typeCmd.textContent = '';
-            typeCopying.textContent = '';
-            typeDots.textContent = '';
-            typeDone.textContent = '';
+            const promptLine = document.querySelector('.prompt-line');
+            const originalContent = promptLine.innerHTML;
             
             navigator.clipboard.writeText(cmd).then(() => {
-                // Hide cursor, show term-output
-                cursor.style.display = 'none';
-                termOutput.style.display = 'block';
+                // Replace with animation
+                promptLine.innerHTML = '> <span id="type-cmd"></span><span class="cursor">_</span><br>> <span class="copying" id="type-copying"></span><span class="dots" id="type-dots"></span><span class="done" id="type-done"></span>';
+                
+                const typeCmd = document.getElementById('type-cmd');
+                const typeCopying = document.getElementById('type-copying');
+                const typeDots = document.getElementById('type-dots');
+                const typeDone = document.getElementById('type-done');
                 
                 // Type "> INITIATE COPY"
                 typeText(typeCmd, "INITIATE COPY", 80, function() {
@@ -338,8 +307,7 @@
                 
                 // Reset after animation
                 setTimeout(() => {
-                    termOutput.style.display = 'none';
-                    cursor.style.display = 'inline';
+                    promptLine.innerHTML = originalContent;
                 }, 2500);
             });
         }
