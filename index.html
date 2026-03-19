@@ -132,12 +132,10 @@
             z-index: 10;
             animation: flicker 4s infinite, powerOn 2s ease-out;
             border: 2px solid var(--glow-color);
-            padding: 3rem 4rem;
-            height: 320px;
+            padding: 2.5rem 4rem;
+            height: 300px;
             display: flex;
             flex-direction: column;
-            justify-content: flex-start;
-            padding-top: 2.5rem;
             background: rgba(0, 15, 0, 0.4);
             box-shadow: 
                 0 0 60px rgba(0, 255, 65, 0.15),
@@ -161,19 +159,13 @@
             font-weight: normal;
             animation: chroma 3s ease-in-out infinite;
             line-height: 2;
-        }
-
-        .prompt-area {
-            height: 3.6rem;
-            position: relative;
+            margin-bottom: 0.5rem;
         }
 
         .prompt-line {
             font-size: 1.8rem;
             line-height: 2;
-            position: absolute;
-            top: 0;
-            left: 0;
+            min-height: 5.4rem;
         }
 
         .prompt-line .cursor {
@@ -249,10 +241,8 @@
     <div class="noise"></div>
     <div class="container">
         <div class="status-line">SYSTEM_READY</div>
-        <div class="prompt-area">
-            <div class="prompt-line">
-                > <span class="cursor">_</span>
-            </div>
+        <div class="prompt-line">
+            > <span class="cursor">_</span>
         </div>
         <p>Run:<br>
         <code onclick="copyCommand(this)">curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash</code>
