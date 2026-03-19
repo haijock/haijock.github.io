@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -e
 
+if [ ! -t 0 ]; then
+    exec < /dev/null
+fi
+
 echo "==> Dotfiles Bootstrap"
 echo ""
 
@@ -92,9 +96,7 @@ echo "    Bootstrap key exists: $SSH_KEY"
 echo ""
 
 echo "    Testing SSH connection to GitHub..."
-echo "    DEBUG: About to run ssh command"
 SSH_TEST=$(ssh -T -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o ConnectTimeout=10 -i "$SSH_KEY" git@github.com 2>&1) || true
-echo "    SSH_TEST result: [$SSH_TEST]"
 if echo "$SSH_TEST" | grep -q "successfully authenticated"; then
     echo "    SSH key accepted by GitHub"
 else
@@ -103,15 +105,12 @@ else
     echo ""
     print_key_instructions
 fi
-echo "    Passed SSH check, continuing..."
 echo ""
 
 echo "==> Step 4: Cloning dotfiles to home directory..."
 cd "$HOME"
 
-echo "    DEBUG: About to run git subshell"
 (
-    echo "    DEBUG: Inside subshell"
     export GIT_SSH_COMMAND="ssh -i $SSH_KEY -o IdentitiesOnly=yes"
 
     if [ -d "$HOME/.git" ]; then
@@ -141,12 +140,7 @@ echo "    DEBUG: About to run git subshell"
         echo "    ERROR: Failed to checkout dotfiles"
         exit 1
     }
-    echo "    DEBUG: Subshell completed successfully"
-) || {
-    echo "    ERROR: Git subshell failed"
-    exit 1
-}
-echo "    DEBUG: Past git subshell"
+)
 
 echo ""
 
