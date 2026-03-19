@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 set -e
 
+echo "DEBUG 1: Script starting" >&2
+
 if [ ! -t 0 ]; then
+    echo "DEBUG 2: Not a tty, redirecting stdin" >&2
     exec < /dev/null
 fi
+
+echo "DEBUG 3: Past stdin fix" >&2
 
 echo "==> Dotfiles Bootstrap"
 echo ""
