@@ -158,10 +158,12 @@
             animation: chroma 3s ease-in-out infinite;
         }
 
-        h1::after {
-            content: "_";
+        h1 br {
+            line-height: 2;
+        }
+
+        h1 span {
             animation: blink 1s step-end infinite;
-            margin-left: 2px;
         }
 
         p {
@@ -240,7 +242,7 @@
     <div class="vignette"></div>
     <div class="noise"></div>
     <div class="container">
-        <h1>> SYSTEM_READY</h1>
+        <h1>SYSTEM_READY<br>> <span>_</span></h1>
         <p>Run:<br>
         <code onclick="copyCommand(this)">curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash<span class="copied" id="copied">>> COPIED</span></code>
         </p>
