@@ -184,7 +184,15 @@
         .prompt-line .done {
             color: var(--glow-color);
             text-shadow: 0 0 15px var(--glow-color), 0 0 30px var(--glow-color);
-            animation: doneBlink 0.4s step-end 3;
+        }
+
+        @keyframes doneBlink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        .prompt-line .cursor {
+            animation: blink 1s step-end infinite;
         }
 
         @keyframes doneBlink {
@@ -290,13 +298,17 @@
             const originalContent = promptLine.innerHTML;
             
             navigator.clipboard.writeText(cmd).then(() => {
-                // Replace with animation
-                promptLine.innerHTML = '> <span id="type-cmd"></span><span class="cursor">_</span><br><span class="copying" id="type-copying"></span><span class="dots" id="type-dots"></span><span class="done" id="type-done"></span>';
+                // Replace with animation - cursor only appears after DONE! blinks
+                promptLine.innerHTML = '> <span id="type-cmd"></span><br><span class="copying" id="type-copying"></span><span class="dots" id="type-dots"></span><span class="done" id="type-done"></span><span class="cursor" id="blink-cursor">_</span>';
                 
                 const typeCmd = document.getElementById('type-cmd');
                 const typeCopying = document.getElementById('type-copying');
                 const typeDots = document.getElementById('type-dots');
                 const typeDone = document.getElementById('type-done');
+                const blinkCursor = document.getElementById('blink-cursor');
+                
+                // Hide cursor initially
+                blinkCursor.style.visibility = 'hidden';
                 
                 // Type "> INITIATE COPY"
                 typeText(typeCmd, "INITIATE COPY", 80, function() {
@@ -304,16 +316,22 @@
                     typeText(typeCopying, "COPYING", 100, function() {
                         // Animate "..."
                         animateDots(typeDots, 3, function() {
-                            // Show "DONE!"
+                            // Show "DONE!" and start blinking
                             typeDone.textContent = "DONE!";
+                            typeDone.style.animation = 'doneBlink 0.4s step-end 3';
+                            // After blinking, show cursor
+                            setTimeout(() => {
+                                typeDone.style.animation = '';
+                                blinkCursor.style.visibility = 'visible';
+                            }, 1200);
                         });
                     });
                 });
                 
-                // Reset after animation (2.5s typing + 1.2s blinking = 3.7s)
+                // Reset after animation
                 setTimeout(() => {
                     promptLine.innerHTML = originalContent;
-                }, 3700);
+                }, 4000);
             });
         }
     </script>
