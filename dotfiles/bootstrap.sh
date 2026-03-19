@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -x
+set -e
 
 if [ ! -t 0 ]; then
     set +e
@@ -7,7 +7,6 @@ if [ ! -t 0 ]; then
     set -e
 fi
 
-set +x
 echo "==> Dotfiles Bootstrap"
 echo ""
 
