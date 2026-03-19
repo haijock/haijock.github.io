@@ -133,7 +133,7 @@
             animation: flicker 4s infinite, powerOn 2s ease-out;
             border: 2px solid var(--glow-color);
             padding: 3rem 4rem;
-            height: 280px;
+            height: 320px;
             display: flex;
             flex-direction: column;
             justify-content: center;
@@ -163,7 +163,11 @@
             line-height: 2;
         }
 
-        h1 span.cursor {
+        h1 .prompt-line {
+            display: block;
+        }
+
+        h1 .prompt-line:last-child span.cursor {
             animation: blink 1s step-end infinite;
         }
 
@@ -174,7 +178,7 @@
             visibility: hidden;
             position: absolute;
             left: 4rem;
-            top: 50%;
+            top: calc(50% + 2rem);
             transform: translateY(-50%);
             transition: opacity 0.2s;
         }
@@ -274,7 +278,10 @@
     <div class="vignette"></div>
     <div class="noise"></div>
     <div class="container">
-        <h1 id="prompt-line">SYSTEM_READY<br>> <span class="cursor">_</span></h1>
+        <h1>
+            <span class="prompt-line">SYSTEM_READY</span>
+            <span class="prompt-line">> <span class="cursor">_</span></span>
+        </h1>
         <div class="term-output" id="term-output">
             <div class="cmd">> <span id="type-cmd"></span><span class="cursor">_</span></div>
             <div class="result">
