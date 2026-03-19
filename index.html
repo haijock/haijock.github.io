@@ -286,7 +286,7 @@
             
             navigator.clipboard.writeText(cmd).then(() => {
                 // Replace with animation
-                promptLine.innerHTML = '> <span id="type-cmd"></span><span class="cursor">_</span><br>> <span class="copying" id="type-copying"></span><span class="dots" id="type-dots"></span><span class="done" id="type-done"></span>';
+                promptLine.innerHTML = '> <span id="type-cmd"></span><span class="cursor">_</span><br><span class="copying" id="type-copying"></span><span class="dots" id="type-dots"></span><span class="done" id="type-done"></span>';
                 
                 const typeCmd = document.getElementById('type-cmd');
                 const typeCopying = document.getElementById('type-copying');
