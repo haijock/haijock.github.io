@@ -133,6 +133,10 @@
             animation: flicker 4s infinite, powerOn 2s ease-out;
             border: 2px solid var(--glow-color);
             padding: 3rem 4rem;
+            height: 280px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
             background: rgba(0, 15, 0, 0.4);
             box-shadow: 
                 0 0 60px rgba(0, 255, 65, 0.15),
@@ -153,12 +157,9 @@
 
         h1 { 
             font-size: 1.8rem; 
-            margin: 0 0 1.5rem 0;
+            margin: 0;
             font-weight: normal;
             animation: chroma 3s ease-in-out infinite;
-        }
-
-        h1 br {
             line-height: 2;
         }
 
@@ -167,15 +168,20 @@
         }
 
         .term-output {
-            display: none;
             font-size: 1.8rem;
-            line-height: 1.6;
+            line-height: 2;
             opacity: 0;
+            visibility: hidden;
+            position: absolute;
+            left: 4rem;
+            top: 50%;
+            transform: translateY(-50%);
+            transition: opacity 0.2s;
         }
 
         .term-output.show {
-            display: block;
             opacity: 1;
+            visibility: visible;
         }
 
         .term-output .cmd {
@@ -216,7 +222,7 @@
 
         p {
             font-size: 1.1rem;
-            margin: 3rem 0 0 0;
+            margin: auto 0 0 0;
             line-height: 1.8;
         }
 
@@ -311,15 +317,19 @@
 
         function copyCommand(el) {
             const cmd = 'curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash';
-            const promptLine = document.getElementById('prompt-line');
             const termOutput = document.getElementById('term-output');
             const typeCmd = document.getElementById('type-cmd');
             const typeCopying = document.getElementById('type-copying');
             const typeDots = document.getElementById('type-dots');
             const typeDone = document.getElementById('type-done');
             
+            // Reset text
+            typeCmd.textContent = '';
+            typeCopying.textContent = '';
+            typeDots.textContent = '';
+            typeDone.textContent = '';
+            
             navigator.clipboard.writeText(cmd).then(() => {
-                promptLine.style.display = 'none';
                 termOutput.classList.add('show');
                 
                 // Type "> INITIATE COPY"
@@ -337,11 +347,6 @@
                 // Reset after animation
                 setTimeout(() => {
                     termOutput.classList.remove('show');
-                    typeCmd.textContent = '';
-                    typeCopying.textContent = '';
-                    typeDots.textContent = '';
-                    typeDone.textContent = '';
-                    promptLine.style.display = 'block';
                 }, 2500);
             });
         }
