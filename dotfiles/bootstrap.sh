@@ -92,7 +92,9 @@ echo "    Bootstrap key exists: $SSH_KEY"
 echo ""
 
 echo "    Testing SSH connection to GitHub..."
+set -x
 SSH_TEST=$(ssh -T -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o ConnectTimeout=10 -i "$SSH_KEY" git@github.com 2>&1) || true
+set +x
 if echo "$SSH_TEST" | grep -q "successfully authenticated"; then
     echo "    SSH key accepted by GitHub"
 else
