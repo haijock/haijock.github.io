@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-SCRIPT_VERSION="3"
+SCRIPT_VERSION="4"
 
 if [ ! -t 0 ]; then
     set +e
@@ -102,9 +102,12 @@ echo ""
 echo "    Testing SSH connection to GitHub..."
 echo "DEBUG v3: About to run ssh" >&2
 set +e
-echo "DEBUG v3: After set +e" >&2
+echo "DEBUG v3: After set +e, running command" >&2
+echo "DEBUG v3: Before command substitution" >&2
+SSH_RESULT=$(echo "test command substitution")
+echo "DEBUG v3: After echo in command substitution, result: [$SSH_RESULT]" >&2
 SSH_TEST=$(timeout 15 ssh -T -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o ConnectTimeout=10 -i "$SSH_KEY" git@github.com 2>&1)
-echo "DEBUG v3: After ssh command" >&2
+echo "DEBUG v3: After ssh command"
 SSH_EXIT=$?
 set -e
 echo "    DEBUG: SSH exit code: $SSH_EXIT, result: [$SSH_TEST]" >&2
