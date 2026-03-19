@@ -184,6 +184,12 @@
         .prompt-line .done {
             color: var(--glow-color);
             text-shadow: 0 0 15px var(--glow-color), 0 0 30px var(--glow-color);
+            animation: doneBlink 0.4s step-end 3;
+        }
+
+        @keyframes doneBlink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
         }
 
         p {
@@ -304,10 +310,10 @@
                     });
                 });
                 
-                // Reset after animation
+                // Reset after animation (2.5s typing + 1.2s blinking = 3.7s)
                 setTimeout(() => {
                     promptLine.innerHTML = originalContent;
-                }, 2500);
+                }, 3700);
             });
         }
     </script>
