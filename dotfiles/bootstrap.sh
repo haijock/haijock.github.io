@@ -68,13 +68,13 @@ echo "    MISE_GITHUB_TOKEN is set"
 echo ""
 
 echo "==> Step 2: Installing mise..."
-if [ -f "$HOME/.local/bin/mise" ]; then
-    echo "    mise already installed"
-else
+if [ ! -f "$HOME/.local/bin/mise" ]; then
     curl https://mise.run | sh
+    echo 'eval "$(~/.local/bin/mise activate bash)"' >> ~/.bashrc
 fi
 
-export PATH="$HOME/.local/bin:$PATH"
+eval "$(~/.local/bin/mise activate bash)"
+cd .  # Trigger reloading the new envs
 echo "    mise installed"
 echo ""
 
