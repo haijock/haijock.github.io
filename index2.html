@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Terminal // Scripts</title>
+    <style>
+        :root {
+            --glow-color: #00ff41;
+            --glow-color-dim: #00aa2a;
+            --bg-color: #0a0f0a;
+            --amber: #ffb000;
+            --dim-text: #4a6a4a;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            background: var(--bg-color);
+            color: var(--glow-color);
+            font-family: 'Courier New', Courier, monospace;
+            margin: 0;
+            padding: 2rem;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Falling hex/binary background */
+        .matrix-bg {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            overflow: hidden;
+            z-index: 0;
+            opacity: 0.15;
+            font-size: 0.75rem;
+            line-height: 1.2;
+            color: var(--glow-color);
+        }
+
+        .matrix-col {
+            position: absolute;
+            top: -100%;
+            animation: fall linear infinite;
+            white-space: pre;
+        }
+
+        @keyframes fall {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(200vh); }
+        }
+
+        /* Scanlines */
+        body::after {
+            content: "";
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0, 0, 0, 0.15) 2px,
+                rgba(0, 0, 0, 0.15) 4px
+            );
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        /* Main container */
+        .terminal {
+            position: relative;
+            z-index: 10;
+            max-width: 900px;
+            margin: 0 auto;
+            border: 1px solid var(--glow-color);
+            background: rgba(0, 10, 0, 0.85);
+            box-shadow: 
+                0 0 40px rgba(0, 255, 65, 0.1),
+                inset 0 0 60px rgba(0, 255, 65, 0.02);
+        }
+
+        /* Terminal header */
+        .term-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 1rem;
+            border-bottom: 1px solid rgba(0, 255, 65, 0.3);
+            background: rgba(0, 40, 0, 0.3);
+        }
+
+        .term-title {
+            font-size: 0.8rem;
+            color: var(--dim-text);
+        }
+
+        .term-clock {
+            font-size: 0.8rem;
+            font-family: monospace;
+            color: var(--glow-color);
+            text-shadow: 0 0 10px var(--glow-color);
+        }
+
+        /* Terminal body */
+        .term-body {
+            padding: 1.5rem;
+        }
+
+        /* Boot text */
+        .boot-text {
+            font-size: 0.75rem;
+            color: var(--dim-text);
+            margin-bottom: 1.5rem;
+            line-height: 1.6;
+        }
+
+        .boot-text span {
+            color: var(--amber);
+        }
+
+        /* Section header */
+        .section {
+            margin-bottom: 2rem;
+        }
+
+        .section-header {
+            font-size: 0.9rem;
+            color: var(--amber);
+            margin-bottom: 1rem;
+            padding-bottom: 0.3rem;
+            border-bottom: 1px dashed rgba(255, 176, 0, 0.3);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .section-header::before {
+            content: "##";
+            opacity: 0.5;
+        }
+
+        /* Script cards */
+        .script-card {
+            background: rgba(0, 30, 0, 0.5);
+            border: 1px solid rgba(0, 255, 65, 0.2);
+            padding: 1rem 1.25rem;
+            margin-bottom: 1rem;
+            transition: all 0.2s ease;
+        }
+
+        .script-card:hover {
+            background: rgba(0, 50, 0, 0.5);
+            border-color: var(--glow-color);
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.15);
+        }
+
+        .script-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 0.5rem;
+        }
+
+        .script-name {
+            font-size: 0.95rem;
+            color: var(--glow-color);
+            text-shadow: 0 0 8px rgba(0, 255, 65, 0.5);
+        }
+
+        .script-tag {
+            font-size: 0.65rem;
+            color: var(--bg-color);
+            background: var(--glow-color);
+            padding: 2px 8px;
+            border-radius: 2px;
+        }
+
+        .script-desc {
+            font-size: 0.8rem;
+            color: var(--dim-text);
+            margin-bottom: 0.75rem;
+            line-height: 1.5;
+        }
+
+        .script-cmd {
+            position: relative;
+        }
+
+        code { 
+            background: rgba(0, 255, 65, 0.08); 
+            padding: 8px 14px; 
+            border-radius: 2px;
+            border: 1px solid rgba(0, 255, 65, 0.3);
+            font-size: 0.8rem;
+            display: block;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            user-select: none;
+        }
+
+        code:hover {
+            background: rgba(0, 255, 65, 0.15);
+            border-color: var(--glow-color);
+            box-shadow: 0 0 15px rgba(0, 255, 65, 0.2);
+        }
+
+        .copied {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: var(--glow-color);
+            font-size: 0.75rem;
+            opacity: 0;
+            transition: opacity 0.3s;
+            text-shadow: 0 0 10px var(--glow-color);
+            background: rgba(0, 20, 0, 0.95);
+            padding: 6px 14px;
+            border: 1px solid var(--glow-color);
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.4);
+            pointer-events: none;
+            white-space: nowrap;
+            z-index: 100;
+        }
+
+        .copied.show {
+            opacity: 1;
+        }
+
+        /* Terminal footer */
+        .term-footer {
+            padding: 0.5rem 1rem;
+            border-top: 1px solid rgba(0, 255, 65, 0.3);
+            background: rgba(0, 40, 0, 0.3);
+            font-size: 0.7rem;
+            color: var(--dim-text);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        /* System stats */
+        .sys-stats {
+            position: fixed;
+            bottom: 1rem;
+            right: 1rem;
+            z-index: 100;
+            font-size: 0.65rem;
+            color: var(--dim-text);
+            text-align: right;
+            line-height: 1.6;
+            opacity: 0.6;
+        }
+
+        .sys-stats span {
+            color: var(--glow-color);
+        }
+
+        /* Hex decoration */
+        .hex-deco {
+            position: fixed;
+            bottom: 1rem;
+            left: 1rem;
+            z-index: 100;
+            font-size: 0.55rem;
+            color: var(--dim-text);
+            opacity: 0.3;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+    <!-- Matrix background -->
+    <div class="matrix-bg" id="matrix-bg"></div>
+
+    <!-- Hex decoration -->
+    <div class="hex-deco">
+        <div>0x7F4A2B</div>
+        <div>0x00FF41</div>
+        <div>0xDEADBEEF</div>
+    </div>
+
+    <!-- System stats -->
+    <div class="sys-stats">
+        <div>TERM: <span>xterm-256color</span></div>
+        <div>SHELL: <span>/usr/bin/bash</span></div>
+        <div>UPTIME: <span id="uptime">--:--:--</span></div>
+    </div>
+
+    <div class="terminal">
+        <div class="term-header">
+            <span class="term-title">martin@haijock:~</span>
+            <span class="term-clock" id="clock">00:00:00</span>
+        </div>
+
+        <div class="term-body">
+            <div class="boot-text">
+<span>[ 0.000000]</span> Linux version 6.1.0-debian x86_64<br>
+<span>[ 0.001234]</span> ACPI: RSDP 0x00000000000F05B0<br>
+<span>[ 0.002567]</span> NET: Registered PF_INET6 protocol family<br>
+<span>[ 0.004123]</span> VFS: Mounted root (ext4 filesystem) readonly<br>
+<span>[ 0.005891]</span> Freeing unused kernel memory: 476K freed<br>
+<span>[ 0.008234]</span> EXT4-fs: mounted filesystem<br>
+<span>[ 0.012456]</span>INIT: Entering runlevel: 5<br>
+<span>[ 0.023891]</span> <span style="color: var(--glow-color)">NETWORK: Interface eth0 UP</span><br>
+<span>[ 0.031234]</span> STARTUP COMPLETE
+            </div>
+
+            <div class="section">
+                <div class="section-header">INSTALL SCRIPTS</div>
+
+                <div class="script-card">
+                    <div class="script-header">
+                        <span class="script-name">bootstrap.sh</span>
+                        <span class="script-tag">BASH</span>
+                    </div>
+                    <div class="script-desc">
+                        Initialize new machine with dotfiles, mise, and development tools.
+                    </div>
+                    <div class="script-cmd">
+                        <code onclick="copyCommand(this, 'curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash')">
+                            curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash
+                            <span class="copied">>> COPIED</span>
+                        </code>
+                    </div>
+                </div>
+
+                <div class="script-card" style="opacity: 0.5; border-style: dashed;">
+                    <div class="script-header">
+                        <span class="script-name">future_script.sh</span>
+                        <span class="script-tag">PLANNED</span>
+                    </div>
+                    <div class="script-desc">
+                        [Coming soon]
+                    </div>
+                    <div class="script-cmd">
+                        <code style="cursor: not-allowed;" onclick="return false;">
+                            # TBD
+                            <span class="copied">>> COPIED</span>
+                        </code>
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="section">
+                <div class="section-header">QUICK REFERENCE</div>
+                <div style="font-size: 0.75rem; color: var(--dim-text); line-height: 1.8;">
+                    <div>> <span style="color: var(--glow-color)">ssh git@github.com</span> - test SSH key</div>
+                    <div>> <span style="color: var(--glow-color)">mise doctor</span> - diagnose mise issues</div>
+                    <div>> <span style="color: var(--glow-color)">mise run dotfiles:bootstrap</span> - rerun bootstrap</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="term-footer">
+            <span>bash 5.2.15</span>
+            <span>2 packages can be updated.</span>
+        </div>
+    </div>
+
+    <script>
+        // Clock
+        function updateClock() {
+            const now = new Date();
+            const time = now.toTimeString().split(' ')[0];
+            document.getElementById('clock').textContent = time;
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // Uptime counter (simulated)
+        let uptimeSeconds = Math.floor(Math.random() * 86400);
+        function updateUptime() {
+            uptimeSeconds++;
+            const h = Math.floor(uptimeSeconds / 3600).toString().padStart(2, '0');
+            const m = Math.floor((uptimeSeconds % 3600) / 60).toString().padStart(2, '0');
+            const s = (uptimeSeconds % 60).toString().padStart(2, '0');
+            document.getElementById('uptime').textContent = `${h}:${m}:${s}`;
+        }
+        setInterval(updateUptime, 1000);
+        updateUptime();
+
+        // Copy command
+        function copyCommand(el, cmd) {
+            if (!cmd) return;
+            navigator.clipboard.writeText(cmd).then(() => {
+                const copied = el.querySelector('.copied');
+                copied.classList.add('show');
+                setTimeout(() => copied.classList.remove('show'), 1500);
+            });
+        }
+
+        // Matrix background
+        function createMatrixColumn() {
+            const chars = '0123456789ABCDEF'.split('');
+            const col = document.createElement('div');
+            col.className = 'matrix-col';
+            col.style.left = Math.random() * 100 + '%';
+            col.style.animationDuration = (15 + Math.random() * 20) + 's';
+            col.style.animationDelay = -Math.random() * 20 + 's';
+            
+            let text = '';
+            for (let i = 0; i < 50; i++) {
+                text += chars[Math.floor(Math.random() * chars.length)] + '\n';
+            }
+            col.textContent = text;
+            
+            document.getElementById('matrix-bg').appendChild(col);
+            
+            col.addEventListener('animationend', () => {
+                col.remove();
+                createMatrixColumn();
+            });
+        }
+
+        // Create initial columns
+        for (let i = 0; i < 15; i++) {
+            createMatrixColumn();
+        }
+    </script>
+</body>
+</html>
