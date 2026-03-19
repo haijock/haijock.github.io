@@ -168,7 +168,7 @@
 
         .term-output {
             display: none;
-            font-size: 1rem;
+            font-size: 1.8rem;
             line-height: 1.6;
             opacity: 0;
         }
@@ -179,11 +179,33 @@
         }
 
         .term-output .cmd {
-            color: var(--glow-color-dim);
+            color: var(--glow-color);
+        }
+
+        .term-output .cmd span {
+            display: inline;
+        }
+
+        .term-output .cmd span.cursor {
+            animation: blink 0.5s step-end infinite;
         }
 
         .term-output .result {
-            margin-top: 0.3rem;
+            font-size: 1.8rem;
+            margin-top: 0.5rem;
+        }
+
+        .term-output .result .copying {
+            color: var(--glow-color-dim);
+        }
+
+        .term-output .result .dots {
+            display: inline-block;
+            min-width: 2.5ch;
+        }
+
+        .term-output .result .done {
+            color: var(--glow-color);
             text-shadow: 0 0 15px var(--glow-color), 0 0 30px var(--glow-color);
         }
 
@@ -194,7 +216,7 @@
 
         p {
             font-size: 1.1rem;
-            margin: 0;
+            margin: 3rem 0 0 0;
             line-height: 1.8;
         }
 
@@ -248,8 +270,10 @@
     <div class="container">
         <h1 id="prompt-line">SYSTEM_READY<br>> <span class="cursor">_</span></h1>
         <div class="term-output" id="term-output">
-            <div class="cmd">> INITIATE COPY</div>
-            <div class="result">COPYING... DONE!</div>
+            <div class="cmd">> <span id="type-cmd"></span><span class="cursor">_</span></div>
+            <div class="result">
+                <span class="copying" id="type-copying"></span><span class="dots" id="type-dots"></span><span class="done" id="type-done"></span>
+            </div>
         </div>
         <p>Run:<br>
         <code onclick="copyCommand(this)">curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash</code>
@@ -257,19 +281,68 @@
     </div>
 
     <script>
+        function typeText(el, text, speed, callback) {
+            let i = 0;
+            function type() {
+                if (i < text.length) {
+                    el.textContent += text.charAt(i);
+                    i++;
+                    setTimeout(type, speed);
+                } else {
+                    if (callback) callback();
+                }
+            }
+            type();
+        }
+
+        function animateDots(el, count, callback) {
+            let i = 0;
+            function dot() {
+                if (i < count) {
+                    el.textContent += '.';
+                    i++;
+                    setTimeout(dot, 150);
+                } else {
+                    if (callback) callback();
+                }
+            }
+            dot();
+        }
+
         function copyCommand(el) {
             const cmd = 'curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash';
             const promptLine = document.getElementById('prompt-line');
             const termOutput = document.getElementById('term-output');
+            const typeCmd = document.getElementById('type-cmd');
+            const typeCopying = document.getElementById('type-copying');
+            const typeDots = document.getElementById('type-dots');
+            const typeDone = document.getElementById('type-done');
             
             navigator.clipboard.writeText(cmd).then(() => {
                 promptLine.style.display = 'none';
                 termOutput.classList.add('show');
                 
+                // Type "> INITIATE COPY"
+                typeText(typeCmd, "INITIATE COPY", 80, function() {
+                    // Type "COPYING"
+                    typeText(typeCopying, "COPYING", 100, function() {
+                        // Animate "..."
+                        animateDots(typeDots, 3, function() {
+                            // Show "DONE!"
+                            typeDone.textContent = "DONE!";
+                        });
+                    });
+                });
+                
+                // Reset after animation
                 setTimeout(() => {
                     termOutput.classList.remove('show');
+                    typeCmd.textContent = '';
+                    typeCopying.textContent = '';
+                    typeDots.textContent = '';
+                    typeDone.textContent = '';
                     promptLine.style.display = 'block';
-                }, 1500);
+                }, 2500);
             });
         }
     </script>
