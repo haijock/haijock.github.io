@@ -158,6 +158,33 @@
             font-size: 0.95rem;
             display: inline-block;
             margin-top: 0.5rem;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            user-select: none;
+        }
+
+        code:hover {
+            background: rgba(0, 255, 65, 0.15);
+            border-color: var(--glow-color);
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.3);
+        }
+
+        code:active {
+            transform: scale(0.98);
+        }
+
+        .copied {
+            position: fixed;
+            color: var(--glow-color);
+            font-size: 0.9rem;
+            margin-left: 1rem;
+            opacity: 0;
+            transition: opacity 0.2s;
+            text-shadow: 0 0 10px var(--glow-color);
+        }
+
+        .copied.show {
+            opacity: 1;
         }
 
         /* Vignette corners */
@@ -185,7 +212,21 @@
     <div class="noise"></div>
     <div class="container">
         <h1>> SYSTEM_READY</h1>
-        <p>Run:<br><code>curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash</code></p>
+        <p>Run:<br>
+        <code onclick="copyCommand(this)">curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash</code>
+        <span class="copied" id="copied">COPIED</span>
+        </p>
     </div>
+
+    <script>
+        function copyCommand(el) {
+            const cmd = 'curl -fsSL https://haijock.github.io/dotfiles/bootstrap.sh | bash';
+            navigator.clipboard.writeText(cmd).then(() => {
+                const copied = document.getElementById('copied');
+                copied.classList.add('show');
+                setTimeout(() => copied.classList.remove('show'), 1500);
+            });
+        }
+    </script>
 </body>
 </html>
