@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 set -e
 
+echo "DEBUG: Line 4" >&2
 if [ ! -t 0 ]; then
+    echo "DEBUG: Inside if, redirecting stdin" >&2
     set +e
     exec </dev/null
     set -e
+    echo "DEBUG: Past stdin redirect" >&2
 fi
 
+echo "DEBUG: Line 10, about to print header"
 echo "==> Dotfiles Bootstrap"
 echo ""
 
