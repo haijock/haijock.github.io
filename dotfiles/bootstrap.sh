@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-SCRIPT_VERSION="5"
+SCRIPT_VERSION="6"
 
 if [ ! -t 0 ]; then
     set +e
@@ -100,15 +100,10 @@ echo "    Bootstrap key exists: $SSH_KEY"
 echo ""
 
 echo "    Testing SSH connection to GitHub..."
-echo "DEBUG v5: About to run ssh" >&2
 set +e
-echo "DEBUG v5: After set +e, running command" >&2
-echo "DEBUG v5: Before command substitution" >&2
-SSH_RESULT=$(echo "test command substitution")
-echo "DEBUG v5: After echo in command substitution, result: [$SSH_RESULT]" >&2
-echo "DEBUG v5: About to run ssh command now" >&2
-SSH_TEST=$(timeout 15 ssh -T -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o ConnectTimeout=10 -i "$SSH_KEY" git@github.com 2>&1)
-echo "DEBUG v5: SSH command completed" >&2
+echo "DEBUG v6: About to run ssh with -n flag" >&2
+SSH_TEST=$(timeout 15 ssh -n -T -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o ConnectTimeout=10 -i "$SSH_KEY" git@github.com 2>&1)
+echo "DEBUG v6: SSH command completed, result: [$SSH_TEST]" >&2
 SSH_EXIT=$?
 set -e
 echo "    DEBUG: SSH exit code: $SSH_EXIT, result: [$SSH_TEST]" >&2
