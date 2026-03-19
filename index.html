@@ -299,6 +299,14 @@
             const originalContent = promptLine.innerHTML;
             
             navigator.clipboard.writeText(cmd).then(() => {
+                // Calculate timing based on command length
+                const initTime = ("INITIATING " + command.toUpperCase()).length * 80;
+                const copyTime = 7 * 100;
+                const dotsTime = 3 * 150;
+                const blinkTime = 1200;
+                const buffer = 500;
+                const totalTime = initTime + copyTime + dotsTime + blinkTime + buffer;
+                
                 // Replace with animation - cursor only appears after DONE! blinks
                 promptLine.innerHTML = '> <span id="type-cmd"></span><br><span class="copying" id="type-copying"></span><span class="dots" id="type-dots"></span><span class="done" id="type-done"></span><span class="cursor" id="blink-cursor">_</span>';
                 
@@ -324,7 +332,7 @@
                             setTimeout(() => {
                                 typeDone.style.animation = '';
                                 blinkCursor.style.visibility = 'visible';
-                            }, 1200);
+                            }, blinkTime);
                         });
                     });
                 });
@@ -332,7 +340,7 @@
                 // Reset after animation
                 setTimeout(() => {
                     promptLine.innerHTML = originalContent;
-                }, 4000);
+                }, totalTime);
             });
         }
     </script>
