@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 set -e
 
-SCRIPT_VERSION="6"
-
 if [ ! -t 0 ]; then
     set +e
     (true) < /dev/null
     set -e
 fi
 
-echo "==> Dotfiles Bootstrap (v$SCRIPT_VERSION)"
+echo "==> Dotfiles Bootstrap"
 echo ""
 
 DETECTED_OS=""
@@ -101,12 +99,8 @@ echo ""
 
 echo "    Testing SSH connection to GitHub..."
 set +e
-echo "DEBUG v6: About to run ssh with -n flag" >&2
 SSH_TEST=$(timeout 15 ssh -n -T -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o ConnectTimeout=10 -i "$SSH_KEY" git@github.com 2>&1)
-echo "DEBUG v6: SSH command completed, result: [$SSH_TEST]" >&2
-SSH_EXIT=$?
 set -e
-echo "    DEBUG: SSH exit code: $SSH_EXIT, result: [$SSH_TEST]" >&2
 if echo "$SSH_TEST" | grep -q "successfully authenticated"; then
     echo "    SSH key accepted by GitHub"
 else
