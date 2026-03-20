@@ -280,7 +280,7 @@
         }
 
         // Animation timing constants (in milliseconds)
-        const INIT_MS_PER_CHAR = 80;    // Typing speed for INITIATING line
+        const INIT_MS_PER_CHAR = 80;    // Typing speed for INITIATE line
         const COPY_MS_PER_CHAR = 100;    // Typing speed for COPYING line
         const DOTS_MS = 800;             // Delay between dots (feels like copying is happening)
         const BLINK_MS = 1200;           // DONE! blinks for 3 cycles
@@ -307,7 +307,7 @@
             
             navigator.clipboard.writeText(cmd).then(() => {
                 // Calculate timing based on command length
-                const initTime = ("INITIATING " + command.toUpperCase()).length * INIT_MS_PER_CHAR;
+                const initTime = ("INITIATE " + command.toUpperCase()).length * INIT_MS_PER_CHAR;
                 const copyTime = 7 * COPY_MS_PER_CHAR;
                 const dotsTime = 3 * DOTS_MS;
                 const blinkTime = BLINK_MS;
@@ -326,8 +326,8 @@
                 // Hide cursor initially
                 blinkCursor.style.visibility = 'hidden';
                 
-                // Type "> INITIATING {command}"
-                typeText(typeCmd, "INITIATING " + command.toUpperCase(), 80, function() {
+                // Type "> INITIATE {command}"
+                typeText(typeCmd, "INITIATE " + command.toUpperCase(), 80, function() {
                     // Type "COPYING"
                     typeText(typeCopying, "COPYING", 100, function() {
                         // Animate "..."
