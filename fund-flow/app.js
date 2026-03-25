@@ -1,3 +1,25 @@
+/**
+ * FundFlow v2 — Self-Funded Procurement Planner
+ *
+ * Architecture:
+ *   Event-sourced model with append-only event log.
+ *   All state is derived from the event log via the project() method.
+ *   Chart.js with custom plugins for interactive timeline visualization.
+ *   LocalStorage persistence.
+ *
+ * Key calculation flow:
+ *   project(atDate)
+ *     → _computePrincipalAndRate()     — sum deposits, find effective rate
+ *     → _buildCashFlowTimeline()       — unify deposits/rates/procurements/OpEx into sorted events
+ *     → _computeCompoundGrowth()       — piecewise compound growth through cash-flow events
+ *     → _computeExpenseData()          — annual costs, last proc dates, scheduled dates
+ *     → _allocateGains()               — OpEx first, then CapEx proportional
+ *     → _redistributeSurplus()         — fully-funded CapEx excess → underfunded
+ *     → _buildProjectedExpenses()      — progress, projected dates, isFunded flags
+ *
+ * @version 2.1.0
+ */
+
 // ========== Chart.js Timeline Plugin ==========
 // Draws a vertical indicator line on the projection chart.
 // Click sets timeline date, drag scrubs, double-click resets to today.
@@ -189,6 +211,51 @@ const EventMarkersPlugin = {
 Chart.register(EventMarkersPlugin);
 
 
+// ========== Zero Line Plugin ==========
+// Draws a horizontal dashed line at y=0 on the projection chart with a "Break-even" label.
+
+const ZeroLinePlugin = {
+    id: 'zeroLine',
+
+    afterDraw(chart) {
+        const opts = chart.options.plugins.zeroLine;
+        if (!opts || !opts.enabled) return;
+        if (chart.config.type !== 'line') return;
+
+        const yScale = chart.scales.y;
+        const area = chart.chartArea;
+        if (!yScale || !area) return;
+
+        // Only draw if 0 is within the visible y range
+        if (yScale.min > 0 || yScale.max < 0) return;
+
+        const yPixel = yScale.getPixelForValue(0);
+        if (yPixel < area.top || yPixel > area.bottom) return;
+
+        const ctx = chart.ctx;
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(area.left, yPixel);
+        ctx.lineTo(area.right, yPixel);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.35)';
+        ctx.setLineDash([6, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Label
+        ctx.font = '10px "DM Sans", sans-serif';
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.5)';
+        ctx.textAlign = 'left';
+        ctx.fillText('Break-even', area.left + 6, yPixel - 4);
+
+        ctx.restore();
+    }
+};
+
+Chart.register(ZeroLinePlugin);
+
+
 // ========== FundFlow Application ==========
 
 const FundFlow = {
@@ -251,6 +318,12 @@ const FundFlow = {
         // Ensure settings have defaults
         if (this.data.settings.redistributeFullyFunded === undefined) {
             this.data.settings.redistributeFullyFunded = true;
+        }
+        if (this.data.settings.inflationRate === undefined) {
+            this.data.settings.inflationRate = 0.02;
+        }
+        if (this.data.settings.showRealValues === undefined) {
+            this.data.settings.showRealValues = false;
         }
     },
 
@@ -316,6 +389,20 @@ const FundFlow = {
             this.saveToStorage();
             this.renderProjection();
             this.updateChart();
+        });
+
+        document.getElementById('inflationToggle').addEventListener('change', (e) => {
+            this.data.settings.showRealValues = e.target.checked;
+            this.saveToStorage();
+            this.updateChart();
+        });
+
+        document.getElementById('inflationRate').addEventListener('input', (e) => {
+            this.data.settings.inflationRate = (parseFloat(e.target.value) || 2) / 100;
+            this.saveToStorage();
+            if (this.data.settings.showRealValues) {
+                this.updateChart();
+            }
         });
 
         // Today button
@@ -387,6 +474,10 @@ const FundFlow = {
             });
         });
 
+        // Deposit impact preview — live update on amount/date change
+        document.getElementById('eventAmount').addEventListener('input', () => this._updateDepositPreview());
+        document.getElementById('eventDate').addEventListener('change', () => this._updateDepositPreview());
+
         // Click overlay to dismiss modals
         document.querySelectorAll('.modal-overlay').forEach(overlay => {
             overlay.addEventListener('click', (e) => {
@@ -440,6 +531,26 @@ const FundFlow = {
 
     // ========== PROJECTOR ==========
 
+    /** Milliseconds in one day — used throughout date arithmetic. */
+    MS_PER_DAY: 86400000,
+
+    /** Average days per year (accounts for leap years). */
+    DAYS_PER_YEAR: 365.25,
+
+    /**
+     * Master projection function — computes the full financial state at a given date.
+     *
+     * Orchestrates the sub-steps:
+     *   1. Compute principal and rate at date
+     *   2. Build unified cash-flow timeline
+     *   3. Run piecewise compound growth
+     *   4. Compute per-expense data and allocate gains
+     *   5. Optionally redistribute surplus
+     *   6. Build projected expense result objects
+     *
+     * @param {Date|string} atDate — the date to project to
+     * @returns {Object} — full projection result (see SPEC.md for shape)
+     */
     project(atDate) {
         const settings = this.data.settings;
         const events = this.data.events;
@@ -449,44 +560,109 @@ const FundFlow = {
         const date = new Date(atDate);
         const dateStr = date.toISOString().split('T')[0];
 
+        // Before fund start: nothing exists yet
         if (date < fundStart) {
             return {
                 principal: 0, rate: 0.07, gains: 0, deductions: 0,
                 principalReturnBalance: 0, expenses: [],
-                totalAnnualCost: 0, isDrainingPrincipal: false
+                totalAnnualCost: 0, isDrainingPrincipal: false,
+                effectiveBase: 0, annualGainAmount: 0
             };
         }
 
         const sortedEvents = [...events].sort((a, b) => new Date(a.date) - new Date(b.date));
 
-        // Principal at date — all deposits are additive
-        let principal = 0;
-        sortedEvents.forEach(ev => {
-            if (ev.date <= dateStr) {
-                if (ev.type === 'deposit') principal += ev.amount;
-            }
+        // Step 1: Principal and rate at projection date
+        const { principal, rate } = this._computePrincipalAndRate(sortedEvents, dateStr, settings);
+
+        // Step 2: Build unified cash-flow timeline
+        const cashFlowEvents = this._buildCashFlowTimeline(sortedEvents, expenses, fundStart, date, dateStr);
+
+        // Step 3: Piecewise compound growth
+        const { gains, compoundBase } = this._computeCompoundGrowth(cashFlowEvents, principal, fundStart, date);
+        const effectiveBase = Math.max(0, compoundBase);
+
+        // Step 4: Compute deductions and PR balance
+        let deductions = 0;
+        cashFlowEvents.forEach(ev => {
+            if (ev.kind === 'outflow') deductions += ev.amount;
         });
-        // If no deposit events exist yet, use settings as fallback
+        const principalReturnBalance = gains - deductions;
+
+        // Step 5: Compute per-expense data
+        const expenseData = this._computeExpenseData(expenses, sortedEvents, fundStart, date);
+
+        // Step 6: Allocate gains (OpEx first, CapEx proportional, redistribute)
+        const annualGainAmount = effectiveBase * rate;
+        this._allocateGains(expenseData, annualGainAmount);
+        if (settings.redistributeFullyFunded) {
+            this._redistributeSurplus(expenseData, date);
+        }
+
+        // Step 7: Build projected expense result objects
+        const projectedExpenses = this._buildProjectedExpenses(expenseData, date);
+        const totalAnnualCost = projectedExpenses.reduce((sum, e) => sum + e.annualCost, 0);
+
+        return {
+            principal,
+            effectiveBase,
+            rate,
+            gains,
+            deductions,
+            annualGainAmount,
+            principalReturnBalance,
+            expenses: projectedExpenses,
+            totalAnnualCost,
+            isDrainingPrincipal: principalReturnBalance < 0
+        };
+    },
+
+    /**
+     * Compute total principal (sum of deposits) and the rate in effect at the given date.
+     *
+     * @param {Array} sortedEvents — events sorted by date ascending
+     * @param {string} dateStr — ISO date string to compute at
+     * @param {Object} settings — app settings (for initialPrincipal fallback)
+     * @returns {{ principal: number, rate: number }}
+     */
+    _computePrincipalAndRate(sortedEvents, dateStr, settings) {
+        let principal = 0;
+        let rate = 0.07;
+
+        sortedEvents.forEach(ev => {
+            if (ev.date > dateStr) return;
+            if (ev.type === 'deposit') principal += ev.amount;
+            if (ev.type === 'rate_change') rate = ev.rate;
+        });
+
+        // Fallback: if no deposit events exist, use settings.initialPrincipal
         if (principal === 0 && settings.initialPrincipal > 0) {
             principal = settings.initialPrincipal;
         }
 
-        // Rate at date
-        let rate = 0.07;
-        sortedEvents.forEach(ev => {
-            if (ev.type === 'rate_change' && ev.date <= dateStr) {
-                rate = ev.rate;
-            }
-        });
+        return { principal, rate };
+    },
 
-        // Piecewise compound gains — gains compound on the available balance.
-        // Deposits increase the base, procurements and OpEx payments decrease it.
-        // When deductions exceed gains, they eat into principal (reducing the compound base).
-        let gains = 0;
-
-        // Build a unified timeline of all cash-flow boundary events
+    /**
+     * Build a unified, sorted timeline of all cash-flow events up to the projection date.
+     *
+     * Includes: deposits (inflow), rate changes, procurements (outflow),
+     * and synthesized monthly OpEx payments per expense.
+     *
+     * OpEx synthesis starts from max(fundStartDate, expense.lastProcurementDate)
+     * to prevent the backdating bug.
+     *
+     * @param {Array} sortedEvents — raw events sorted by date
+     * @param {Array} expenses — current expense definitions
+     * @param {Date} fundStart — fund start date
+     * @param {Date} date — projection date
+     * @param {string} dateStr — ISO date string of projection date
+     * @returns {Array} — sorted cash-flow events with { date, kind, amount?, rate? }
+     */
+    _buildCashFlowTimeline(sortedEvents, expenses, fundStart, date, dateStr) {
         const cashFlowEvents = [];
 
+        // Real events: deposits, rate changes, procurements
         sortedEvents.forEach(ev => {
             if (ev.date > dateStr) return;
             if (ev.type === 'deposit') {
@@ -498,33 +674,53 @@ const FundFlow = {
             }
         });
 
-        // Synthesize monthly OpEx payment events from fund start to projection date
-        const activeOpex = expenses.filter(e => e.type === 'opex');
-        if (activeOpex.length > 0) {
-            const totalMonthly = activeOpex.reduce((sum, exp) => {
-                return sum + (exp.billingCycle === 'monthly' ? exp.cost : exp.cost / 12);
-            }, 0);
-            if (totalMonthly > 0) {
-                let y = fundStart.getFullYear();
-                let m = fundStart.getMonth() + 1; // first payment one month after start
-                while (true) {
-                    if (m > 11) { m -= 12; y++; }
-                    const payDate = new Date(y, m, 1);
-                    if (payDate > date) break;
+        // Synthesized OpEx payments — per expense, starting from the correct date
+        expenses.filter(e => e.type === 'opex').forEach(exp => {
+            const monthlyCost = exp.billingCycle === 'monthly' ? exp.cost : exp.cost / 12;
+            if (monthlyCost <= 0) return;
+
+            const expStartRaw = exp.lastProcurementDate ? new Date(exp.lastProcurementDate) : fundStart;
+            const expStart = expStartRaw > fundStart ? expStartRaw : fundStart;
+
+            let y = expStart.getFullYear();
+            let m = expStart.getMonth() + 1; // first payment one month after start
+            while (true) {
+                if (m > 11) { m -= 12; y++; }
+                const payDate = new Date(y, m, 1);
+                if (payDate > date) break;
+                if (payDate >= fundStart) {
                     cashFlowEvents.push({
                         date: payDate.toISOString().split('T')[0],
                         kind: 'outflow',
-                        amount: totalMonthly
+                        amount: monthlyCost
                     });
-                    m++;
                 }
+                m++;
             }
-        }
+        });
 
         cashFlowEvents.sort((a, b) => a.date.localeCompare(b.date));
+        return cashFlowEvents;
+    },
 
+    /**
+     * Compute piecewise compound growth through the cash-flow timeline.
+     *
+     * For each period between events, compounds at the current rate:
+     *   growth = base * ((1 + rate)^(days/365) - 1)
+     *
+     * Deposits increase the compound base; outflows decrease it.
+     * When the base goes negative (draining principal), growth halts.
+     *
+     * @param {Array} cashFlowEvents — sorted cash-flow events
+     * @param {number} principal — total principal (for fallback when no deposit events)
+     * @param {Date} fundStart — fund start date
+     * @param {Date} date — projection date
+     * @returns {{ gains: number, compoundBase: number }}
+     */
+    _computeCompoundGrowth(cashFlowEvents, principal, fundStart, date) {
+        let gains = 0;
         let currentRate = 0.07;
-        // Start compound base from the principal (handles fallback when no deposit events exist)
         const hasDepositEvents = cashFlowEvents.some(ev => ev.kind === 'deposit');
         let compoundBase = hasDepositEvents ? 0 : principal;
         let currentStart = fundStart;
@@ -532,7 +728,7 @@ const FundFlow = {
         for (const ev of cashFlowEvents) {
             const evDate = new Date(ev.date);
             if (evDate > fundStart && evDate <= date) {
-                const days = (evDate - currentStart) / (1000 * 60 * 60 * 24);
+                const days = (evDate - currentStart) / this.MS_PER_DAY;
                 if (days > 0 && compoundBase > 0) {
                     const periodGrowth = compoundBase * (Math.pow(1 + currentRate, days / 365) - 1);
                     gains += periodGrowth;
@@ -546,26 +742,33 @@ const FundFlow = {
                 compoundBase += ev.amount;
             } else if (ev.kind === 'outflow') {
                 compoundBase -= ev.amount;
-                // compoundBase can go negative (eating into principal)
             }
         }
 
-        const finalDays = (date - currentStart) / (1000 * 60 * 60 * 24);
+        // Final period: from last event to projection date
+        const finalDays = (date - currentStart) / this.MS_PER_DAY;
         if (finalDays > 0 && compoundBase > 0) {
             const periodGrowth = compoundBase * (Math.pow(1 + currentRate, finalDays / 365) - 1);
             gains += periodGrowth;
+            compoundBase += periodGrowth;
         }
 
-        // Deductions (total outflows, for PR balance display)
-        let deductions = 0;
-        cashFlowEvents.forEach(ev => {
-            if (ev.kind === 'outflow') deductions += ev.amount;
-        });
+        return { gains, compoundBase };
+    },
 
-        const principalReturnBalance = gains - deductions;
-
-        // Project expenses — compute annual costs and base data
-        const expenseData = expenses.map(exp => {
+    /**
+     * Compute per-expense metadata: annual cost, last procurement date,
+     * gain start date, scheduled date.
+     *
+     * @param {Array} expenses — expense definitions
+     * @param {Array} sortedEvents — events sorted by date
+     * @param {Date} fundStart — fund start date
+     * @param {Date} date — projection date
+     * @returns {Array} — expense data objects with allocation slots
+     */
+    _computeExpenseData(expenses, sortedEvents, fundStart, date) {
+        return expenses.map(exp => {
+            // Annual cost: CapEx = cost/interval, OpEx = yearly or monthly*12
             let annualCost;
             if (exp.type === 'capex') {
                 annualCost = exp.cost / exp.interval;
@@ -573,6 +776,7 @@ const FundFlow = {
                 annualCost = exp.billingCycle === 'yearly' ? exp.cost : exp.cost * 12;
             }
 
+            // Find last procurement date from events
             const lastProcEvents = sortedEvents
                 .filter(ev => ev.type === 'procurement' && ev.expenseId === exp.id)
                 .sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -582,37 +786,38 @@ const FundFlow = {
                 lastProcDate = new Date(lastProcEvents[0].date);
             }
 
-            // Gains can only accumulate from when the fund started earning,
-            // so clamp the effective start for gain calculations
+            // Clamp gain start to fund start (gains can't accumulate before the fund existed)
             const gainStartDate = lastProcDate < fundStart ? fundStart : lastProcDate;
 
+            // Scheduled date: when the next procurement is due (CapEx only)
             let scheduledDate = null;
             if (exp.type === 'capex') {
-                const nextDate = new Date(lastProcDate.getTime() + (exp.interval * 365.25 * 24 * 60 * 60 * 1000));
+                const nextDate = new Date(lastProcDate.getTime() + (exp.interval * this.DAYS_PER_YEAR * this.MS_PER_DAY));
                 scheduledDate = nextDate.toISOString().split('T')[0];
             }
 
             return { exp, annualCost, lastProcDate, gainStartDate, scheduledDate, allocatedAnnualGains: 0 };
         });
+    },
 
-        // Annual gain amount from the principal at the current rate
-        const annualGainAmount = principal * rate;
-
-        // === Allocation strategy ===
-        // 1. OpEx (subscriptions) are mandatory — they get first claim on gains
-        // 2. Remaining gains go to CapEx items proportionally
-        // 3. Optionally, fully-funded CapEx surplus is redistributed to unfunded ones
-
+    /**
+     * Allocate annual gains to expenses: OpEx first (mandatory), then CapEx (proportional).
+     *
+     * Modifies expenseData in place (sets allocatedAnnualGains on each item).
+     *
+     * @param {Array} expenseData — from _computeExpenseData()
+     * @param {number} annualGainAmount — effective base * rate
+     */
+    _allocateGains(expenseData, annualGainAmount) {
+        // OpEx gets first claim
         const totalOpExAnnual = expenseData
             .filter(d => d.exp.type === 'opex')
             .reduce((sum, d) => sum + d.annualCost, 0);
 
-        // OpEx coverage ratio: what fraction of subscription costs can gains cover?
         const opexCoverageRatio = totalOpExAnnual > 0
             ? Math.min(1, annualGainAmount / totalOpExAnnual)
             : 1;
 
-        // Allocate to OpEx — each gets its fair share (all equally covered/underfunded)
         const gainsAfterOpex = Math.max(0, annualGainAmount - totalOpExAnnual);
 
         expenseData.forEach(d => {
@@ -621,7 +826,7 @@ const FundFlow = {
             }
         });
 
-        // Allocate remaining gains to CapEx proportionally by annual cost
+        // Remaining gains to CapEx proportionally by annual cost
         const capexItems = expenseData.filter(d => d.exp.type === 'capex');
         const totalCapExAnnual = capexItems.reduce((sum, d) => sum + d.annualCost, 0);
 
@@ -629,90 +834,101 @@ const FundFlow = {
             const share = totalCapExAnnual > 0 ? d.annualCost / totalCapExAnnual : 0;
             d.allocatedAnnualGains = share * gainsAfterOpex;
         });
+    },
 
-        // Optionally redistribute fully-funded CapEx surplus to unfunded CapExs.
-        // "Fully funded" is time-dependent: an item is fully funded when
-        // allocatedAnnualGains * yearsSinceLastProc >= cost.
-        // When that happens, the item only needs (cost / yearsSinceLastProc) per year,
-        // and the excess annual allocation flows to unfunded items.
-        if (settings.redistributeFullyFunded) {
-            // Precompute yearsSinceProc for each capex item (clamped to fund start)
+    /**
+     * Redistribute surplus from fully-funded CapEx items to underfunded ones.
+     *
+     * A CapEx item is "fully funded" when:
+     *   allocatedAnnualGains * yearsSinceLastProc >= cost
+     *
+     * The excess (allocatedAnnualGains - cost/yearsSinceLastProc) flows to
+     * unfunded items proportionally by annual cost. Iterates until stable.
+     *
+     * Modifies expenseData in place.
+     *
+     * @param {Array} expenseData — from _computeExpenseData() with allocations set
+     * @param {Date} date — projection date
+     */
+    _redistributeSurplus(expenseData, date) {
+        const capexItems = expenseData.filter(d => d.exp.type === 'capex');
+
+        // Precompute years since last procurement for each item
+        capexItems.forEach(d => {
+            const daysSinceProc = Math.max(0, (date - d.gainStartDate) / this.MS_PER_DAY);
+            d._yearsSinceProc = daysSinceProc / this.DAYS_PER_YEAR;
+        });
+
+        // Iterative redistribution (converges in at most N+1 iterations)
+        const maxIterations = capexItems.length + 1;
+        for (let iter = 0; iter < maxIterations; iter++) {
+            let surplus = 0;
+            const unfunded = [];
+
             capexItems.forEach(d => {
-                const daysSinceProc = Math.max(0, (date - d.gainStartDate) / (1000 * 60 * 60 * 24));
-                d._yearsSinceProc = daysSinceProc / 365.25;
-            });
-
-            // Iteratively redistribute: items that become fully funded after
-            // receiving surplus may themselves have excess to give back
-            const maxIterations = capexItems.length + 1;
-            for (let iter = 0; iter < maxIterations; iter++) {
-                let surplus = 0;
-                const funded = [];
-                const unfunded = [];
-
-                capexItems.forEach(d => {
-                    if (d._yearsSinceProc > 0) {
-                        const accumulated = d.allocatedAnnualGains * d._yearsSinceProc;
-                        if (accumulated >= d.exp.cost) {
-                            // This item is fully funded — it only needs enough to reach 100%
-                            const needed = d.exp.cost / d._yearsSinceProc;
-                            surplus += d.allocatedAnnualGains - needed;
-                            d.allocatedAnnualGains = needed;
-                            funded.push(d);
-                        } else {
-                            unfunded.push(d);
-                        }
+                if (d._yearsSinceProc > 0) {
+                    const accumulated = d.allocatedAnnualGains * d._yearsSinceProc;
+                    if (accumulated >= d.exp.cost) {
+                        const needed = d.exp.cost / d._yearsSinceProc;
+                        surplus += d.allocatedAnnualGains - needed;
+                        d.allocatedAnnualGains = needed;
                     } else {
-                        // No time elapsed — can't be funded, keep allocation as-is
                         unfunded.push(d);
                     }
-                });
+                } else {
+                    unfunded.push(d);
+                }
+            });
 
-                if (surplus <= 0 || unfunded.length === 0) break;
+            if (surplus <= 0 || unfunded.length === 0) break;
 
-                // Distribute surplus proportionally by annual cost among unfunded items
-                const unfundedTotal = unfunded.reduce((sum, d) => sum + d.annualCost, 0);
-                unfunded.forEach(d => {
-                    const proportion = unfundedTotal > 0
-                        ? d.annualCost / unfundedTotal
-                        : 1 / unfunded.length;
-                    d.allocatedAnnualGains += surplus * proportion;
-                });
-            }
-
-            // Clean up temp property
-            capexItems.forEach(d => { delete d._yearsSinceProc; });
+            const unfundedTotal = unfunded.reduce((sum, d) => sum + d.annualCost, 0);
+            unfunded.forEach(d => {
+                const proportion = unfundedTotal > 0
+                    ? d.annualCost / unfundedTotal
+                    : 1 / unfunded.length;
+                d.allocatedAnnualGains += surplus * proportion;
+            });
         }
 
-        // Build projected expense objects
-        const projectedExpenses = expenseData.map(d => {
+        // Cleanup
+        capexItems.forEach(d => { delete d._yearsSinceProc; });
+    },
+
+    /**
+     * Build the final projected expense objects from expense data.
+     *
+     * Computes: progress %, allocated gains, projected date, isFunded flag.
+     *
+     * @param {Array} expenseData — with allocations set
+     * @param {Date} date — projection date
+     * @returns {Array} — projected expense objects for the result
+     */
+    _buildProjectedExpenses(expenseData, date) {
+        return expenseData.map(d => {
             const { exp, annualCost, lastProcDate, gainStartDate, scheduledDate, allocatedAnnualGains } = d;
 
-            // Progress: for CapEx, how much of the next cost has been accumulated
-            // since last procurement via allocated gains (clamped to fund start)
             let allocatedGains = 0;
             let progress = 0;
 
             if (exp.type === 'capex') {
-                const daysSinceProc = Math.max(0, (date - gainStartDate) / (1000 * 60 * 60 * 24));
-                const yearsSinceProc = daysSinceProc / 365.25;
+                const daysSinceProc = Math.max(0, (date - gainStartDate) / this.MS_PER_DAY);
+                const yearsSinceProc = daysSinceProc / this.DAYS_PER_YEAR;
                 allocatedGains = allocatedAnnualGains * yearsSinceProc;
                 progress = exp.cost > 0 ? (allocatedGains / exp.cost) * 100 : 0;
             } else {
-                // OpEx: allocated vs needed annually
                 allocatedGains = allocatedAnnualGains;
                 progress = annualCost > 0 ? (allocatedAnnualGains / annualCost) * 100 : 0;
             }
 
-            // Projected date: when will accumulated gains reach the cost?
+            // Projected date: when accumulated gains reach the cost
             let projectedDate = null;
             if (exp.type === 'capex' && allocatedAnnualGains > 0) {
                 const yearsToFund = exp.cost / allocatedAnnualGains;
-                const projDate = new Date(gainStartDate.getTime() + (yearsToFund * 365.25 * 24 * 60 * 60 * 1000));
+                const projDate = new Date(gainStartDate.getTime() + (yearsToFund * this.DAYS_PER_YEAR * this.MS_PER_DAY));
                 projectedDate = projDate.toISOString().split('T')[0];
             }
 
-            // isFunded: CapEx — progress >= 100%; OpEx — annual gains cover annual cost
             const isFunded = exp.type === 'capex'
                 ? progress >= 100
                 : allocatedAnnualGains >= annualCost;
@@ -729,19 +945,121 @@ const FundFlow = {
                 isFunded
             };
         });
+    },
 
-        const totalAnnualCost = projectedExpenses.reduce((sum, e) => sum + e.annualCost, 0);
+    // ========== MONTE CARLO SIMULATION ==========
 
-        return {
-            principal,
-            rate,
-            gains,
-            deductions,
-            principalReturnBalance,
-            expenses: projectedExpenses,
-            totalAnnualCost,
-            isDrainingPrincipal: principalReturnBalance < 0
-        };
+    /**
+     * Run a Monte Carlo simulation to produce confidence bands for the projection chart.
+     *
+     * Isolated layer — does NOT modify any existing state or calculations.
+     *
+     * For each trial, generates randomized annual returns from a lognormal distribution
+     * (Box-Muller transform), then simulates quarterly compound growth with expense
+     * deductions. Produces percentile bands (p10, p25, p50, p75, p90) at each quarter.
+     *
+     * Lognormal parameters:
+     *   mu = ln(1 + expectedRate) - sigma^2/2  (drift-adjusted so median matches expected)
+     *   sigma = volatility (default 0.15 for equity-like assets)
+     *
+     * @param {number} years — projection horizon
+     * @param {number} [trials=300] — number of simulation paths
+     * @param {number} [volatility=0.15] — annualized volatility (standard deviation of log returns)
+     * @returns {Array<{ date: string, p10: number, p25: number, p50: number, p75: number, p90: number }>}
+     */
+    runMonteCarlo(years, trials, volatility) {
+        trials = trials || 300;
+        volatility = volatility || 0.15;
+
+        const settings = this.data.settings;
+        const fundStart = new Date(settings.fundStartDate);
+        const expectedRate = this.getCurrentRate();
+
+        // Baseline projection to get starting values
+        const baseProj = this.project(fundStart);
+        const startPrincipal = baseProj.principal || settings.initialPrincipal;
+        const quarterlyExpense = baseProj.totalAnnualCost / 4;
+
+        // Drift-adjusted mu for lognormal: E[exp(mu + sigma*Z)] = 1 + expectedRate
+        const mu = Math.log(1 + expectedRate) - (volatility * volatility) / 2;
+
+        const totalQuarters = years * 4;
+
+        // results[quarter] = array of PR balances across trials
+        const results = [];
+        for (let q = 0; q <= totalQuarters; q++) {
+            results.push([]);
+        }
+
+        for (let t = 0; t < trials; t++) {
+            // Generate annual returns for this trial
+            const annualReturns = [];
+            for (let y = 0; y < years; y++) {
+                // Box-Muller transform for standard normal
+                const u1 = Math.random() || 0.0001; // avoid log(0)
+                const u2 = Math.random();
+                const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+                const logReturn = mu + volatility * z;
+                annualReturns.push(Math.exp(logReturn) - 1);
+            }
+
+            // Simulate quarterly: track compound base and cumulative gains/deductions
+            let base = startPrincipal;
+            let cumGains = 0;
+            let cumDeductions = 0;
+
+            results[0].push(0); // At fund start, PR balance = 0
+
+            // Include future deposits (events with date > fundStart)
+            const futureDeposits = this.data.events
+                .filter(ev => ev.type === 'deposit' && new Date(ev.date) > fundStart)
+                .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            for (let q = 1; q <= totalQuarters; q++) {
+                const yearIndex = Math.min(Math.floor((q - 1) / 4), annualReturns.length - 1);
+                const r = annualReturns[yearIndex];
+                const quarterlyRate = Math.pow(1 + r, 0.25) - 1;
+
+                // Check for deposits in this quarter
+                const qStart = new Date(fundStart.getTime() + ((q - 1) * 91.31 * 24 * 60 * 60 * 1000));
+                const qEnd = new Date(fundStart.getTime() + (q * 91.31 * 24 * 60 * 60 * 1000));
+                for (const dep of futureDeposits) {
+                    const depDate = new Date(dep.date);
+                    if (depDate > qStart && depDate <= qEnd) {
+                        base += dep.amount;
+                    }
+                }
+
+                // Grow base (only if positive)
+                const gain = base > 0 ? base * quarterlyRate : 0;
+                cumGains += gain;
+                base += gain;
+
+                // Deduct expenses
+                base -= quarterlyExpense;
+                cumDeductions += quarterlyExpense;
+
+                results[q].push(cumGains - cumDeductions);
+            }
+        }
+
+        // Compute percentile bands at each quarter
+        const bands = [];
+        for (let q = 0; q <= totalQuarters; q++) {
+            const sorted = results[q].slice().sort((a, b) => a - b);
+            const len = sorted.length;
+            const qDate = new Date(fundStart.getTime() + (q * 91.31 * 24 * 60 * 60 * 1000));
+            bands.push({
+                date: qDate.toISOString().split('T')[0],
+                p10: sorted[Math.floor(len * 0.10)] || 0,
+                p25: sorted[Math.floor(len * 0.25)] || 0,
+                p50: sorted[Math.floor(len * 0.50)] || 0,
+                p75: sorted[Math.floor(len * 0.75)] || 0,
+                p90: sorted[Math.floor(len * 0.90)] || 0,
+            });
+        }
+
+        return bands;
     },
 
     // ========== RENDER ==========
@@ -759,6 +1077,22 @@ const FundFlow = {
             balanceEl.classList.add('warning');
         }
 
+        // Quick Win 1: Show what fraction of expenses is funded from principal
+        const balanceHintEl = document.getElementById('balanceHint');
+        if (balanceHintEl) {
+            if (proj.isDrainingPrincipal) {
+                const pctFromPrincipal = proj.totalAnnualCost > 0
+                    ? Math.min(100, Math.round((-proj.principalReturnBalance / (proj.totalAnnualCost * ((this.timelineDate - new Date(this.data.settings.fundStartDate)) / (365.25 * 24 * 60 * 60 * 1000)))) * 100))
+                    : 0;
+                balanceHintEl.textContent = 'Funding ' + this.formatNumber(-proj.principalReturnBalance) + ' SEK from principal';
+                balanceHintEl.style.color = 'var(--accent-danger)';
+                balanceHintEl.style.display = '';
+            } else {
+                balanceHintEl.textContent = '';
+                balanceHintEl.style.display = 'none';
+            }
+        }
+
         // Header stats
         document.getElementById('principalDisplay').textContent = this.formatNumber(proj.principal) + ' SEK';
         document.getElementById('gainsDisplay').textContent = this.formatNumber(proj.gains) + ' SEK';
@@ -767,14 +1101,35 @@ const FundFlow = {
         const requiredPrincipal = proj.rate > 0 ? proj.totalAnnualCost / proj.rate : 0;
         const reqEl = document.getElementById('requiredPrincipalDisplay');
         reqEl.textContent = this.formatNumber(requiredPrincipal) + ' SEK';
+        // Quick Win 4: Color required red when underfunded, green when OK
         if (proj.principal >= requiredPrincipal && requiredPrincipal > 0) {
             reqEl.style.color = 'var(--accent-primary)';
+        } else if (requiredPrincipal > 0) {
+            reqEl.style.color = 'var(--accent-danger)';
         } else {
             reqEl.style.color = 'var(--text-secondary)';
         }
 
+        // Quick Win 12: Show monthly gain from effective base
+        const monthlyGainEl = document.getElementById('monthlyGainHint');
+        if (monthlyGainEl) {
+            const monthlyGain = proj.annualGainAmount / 12;
+            monthlyGainEl.textContent = '\u2248 ' + this.formatNumber(monthlyGain) + ' SEK/month in gains';
+        }
+
         // Draining warning
         document.getElementById('drainingWarning').style.display = proj.isDrainingPrincipal ? 'inline-flex' : 'none';
+
+        // Quick Win 5: Rate warning for unrealistic rates
+        const rateWarningEl = document.getElementById('rateWarning');
+        if (rateWarningEl) {
+            if (proj.rate > 0.10) {
+                rateWarningEl.textContent = 'Sustained returns above 10% are historically rare';
+                rateWarningEl.style.display = '';
+            } else {
+                rateWarningEl.style.display = 'none';
+            }
+        }
 
         // Timeline date display
         document.getElementById('timelineDateDisplay').textContent = this.timelineDate.toISOString().split('T')[0];
@@ -806,6 +1161,13 @@ const FundFlow = {
 
         // Redistribute toggle
         document.getElementById('redistributeToggle').checked = this.data.settings.redistributeFullyFunded !== false;
+
+        // Inflation toggle
+        document.getElementById('inflationToggle').checked = this.data.settings.showRealValues === true;
+        const inflRateEl = document.getElementById('inflationRate');
+        if (document.activeElement !== inflRateEl) {
+            inflRateEl.value = ((this.data.settings.inflationRate || 0.02) * 100).toFixed(1);
+        }
     },
 
     getCurrentRate() {
@@ -922,6 +1284,20 @@ const FundFlow = {
     renderCapExRow(exp) {
         const progressClass = exp.progress >= 100 ? '' : exp.progress >= 50 ? 'warning' : 'danger';
 
+        // Quick Win 3: Show SEK accumulated vs cost
+        const accumulatedStr = this.formatNumber(Math.min(exp.allocatedGains, exp.cost)) + ' of ' + this.formatNumber(exp.cost) + ' SEK';
+
+        // Quick Win 9: Underfunded warning when projected date > scheduled date
+        let underfundedWarning = '';
+        if (exp.scheduledDate && exp.projectedDate && exp.projectedDate > exp.scheduledDate && exp.progress < 100) {
+            const schedMs = new Date(exp.scheduledDate).getTime();
+            const projMs = new Date(exp.projectedDate).getTime();
+            const monthsLate = Math.round((projMs - schedMs) / (30.44 * 24 * 60 * 60 * 1000));
+            if (monthsLate > 0) {
+                underfundedWarning = '<div style="font-size: 0.7rem; color: var(--accent-warning); margin-top: 2px;">Underfunded \u2014 projected completion ' + monthsLate + ' month' + (monthsLate !== 1 ? 's' : '') + ' late</div>';
+            }
+        }
+
         return '<div class="expense-row">' +
             '<div class="expense-info">' +
                 '<div class="expense-name-row">' +
@@ -937,12 +1313,13 @@ const FundFlow = {
                         '<div class="progress-fill ' + progressClass + '" style="width: ' + Math.min(exp.progress, 100) + '%"></div>' +
                     '</div>' +
                     '<div class="progress-info">' +
-                        '<span class="progress-percent">' + exp.progress.toFixed(0) + '% funded</span>' +
+                        '<span class="progress-percent">' + exp.progress.toFixed(0) + '% funded &middot; ' + accumulatedStr + '</span>' +
                         '<span class="progress-dates">' +
                             (exp.scheduledDate ? 'Sched: ' + exp.scheduledDate : '') +
                             (exp.projectedDate ? ' &rarr; Proj: ' + exp.projectedDate : '') +
                         '</span>' +
                     '</div>' +
+                    underfundedWarning +
                 '</div>' +
             '</div>' +
             '<div class="expense-cost">' + this.formatNumber(exp.cost) + ' SEK</div>' +
@@ -956,6 +1333,9 @@ const FundFlow = {
 
     renderOpExRow(exp) {
         const progressClass = exp.progress >= 100 ? '' : exp.progress >= 50 ? 'warning' : 'danger';
+
+        // Quick Win 6: Show opportunity cost — gains consumed by this subscription
+        const opportunityCost = 'This costs ' + this.formatNumber(exp.annualCost) + ' SEK/yr in gains unavailable for CapEx';
 
         return '<div class="expense-row">' +
             '<div class="expense-info">' +
@@ -972,6 +1352,7 @@ const FundFlow = {
                     '</div>' +
                     '<div class="progress-info">' +
                         '<span class="progress-percent">' + exp.progress.toFixed(0) + '% covered</span>' +
+                        '<span class="progress-dates" style="color: var(--text-muted); font-size: 0.65rem;">' + opportunityCost + '</span>' +
                     '</div>' +
                 '</div>' +
             '</div>' +
@@ -1017,10 +1398,17 @@ const FundFlow = {
             editBtn = '<button class="icon-btn" onclick="FundFlow.editEvent(\'' + ev.id + '\')" title="Edit">&#x270E;</button>';
         }
 
-        return '<div class="event-row">' +
+        // Quick Win 11: Dim future events and label them "Scheduled"
+        const today = new Date().toISOString().split('T')[0];
+        const isFuture = ev.date > today;
+        const futureStyle = isFuture ? ' style="opacity: 0.5;"' : '';
+        const futureLabel = isFuture ? ' <span style="font-size: 0.6rem; color: var(--accent-secondary); text-transform: uppercase; letter-spacing: 0.3px;">Scheduled</span>' : '';
+
+        return '<div class="event-row"' + futureStyle + '>' +
             '<span class="event-date">' + ev.date + '</span>' +
             '<span class="event-icon">' + (icons[ev.type] || '&bull;') + '</span>' +
             (badges[ev.type] || '') +
+            futureLabel +
             '<span class="event-desc">' + desc + '</span>' +
             '<span class="event-value">' + value + '</span>' +
             '<div class="event-actions">' +
@@ -1063,20 +1451,69 @@ const FundFlow = {
             if (!opts.plugins) opts.plugins = {};
             opts.plugins.eventMarkers = { markers };
 
+            // Monte Carlo confidence bands (additive overlay — no effect on deterministic line)
+            const mcBands = this.runMonteCarlo(20, 300, 0.15);
+            const showReal = this.data.settings.showRealValues;
+            const inflRate = this.data.settings.inflationRate || 0.02;
+            const fundStartMs = new Date(this.data.settings.fundStartDate).getTime();
+            const mcDatasets = [
+                {
+                    label: '90th Percentile',
+                    data: mcBands.map(b => {
+                        let discount = 1;
+                        if (showReal) {
+                            const yrs = (new Date(b.date).getTime() - fundStartMs) / (365.25 * 24 * 60 * 60 * 1000);
+                            discount = Math.pow(1 + inflRate, yrs);
+                        }
+                        return { x: b.date, y: b.p90 / discount };
+                    }),
+                    borderColor: 'rgba(0, 212, 170, 0.2)',
+                    backgroundColor: 'transparent',
+                    borderWidth: 1,
+                    borderDash: [3, 3],
+                    pointRadius: 0,
+                    pointHoverRadius: 0,
+                    fill: false,
+                    tension: 0.4,
+                    order: 10
+                },
+                {
+                    label: '10th Percentile',
+                    data: mcBands.map(b => {
+                        let discount = 1;
+                        if (showReal) {
+                            const yrs = (new Date(b.date).getTime() - fundStartMs) / (365.25 * 24 * 60 * 60 * 1000);
+                            discount = Math.pow(1 + inflRate, yrs);
+                        }
+                        return { x: b.date, y: b.p10 / discount };
+                    }),
+                    borderColor: 'rgba(239, 68, 68, 0.25)',
+                    backgroundColor: 'rgba(124, 58, 237, 0.04)',
+                    borderWidth: 1,
+                    borderDash: [3, 3],
+                    pointRadius: 0,
+                    pointHoverRadius: 0,
+                    fill: '-1',  // fill between this and previous (90th) dataset
+                    tension: 0.4,
+                    order: 10
+                }
+            ];
+
             return {
                 type: 'line',
                 data: {
                     labels: projections.map(p => p.date),
                     datasets: [
                         {
-                            label: 'PR Balance',
+                            label: showReal ? 'PR Balance (real)' : 'PR Balance',
                             data: projections.map(p => p.balance),
-                            borderColor: '#00d4aa',
-                            backgroundColor: 'rgba(0, 212, 170, 0.08)',
+                            borderColor: showReal ? '#00b4d8' : '#00d4aa',
+                            backgroundColor: showReal ? 'rgba(0, 180, 216, 0.08)' : 'rgba(0, 212, 170, 0.08)',
                             fill: true,
                             tension: 0.4,
                             pointRadius: 2,
-                            pointHoverRadius: 5
+                            pointHoverRadius: 5,
+                            order: 1
                         },
                         {
                             label: 'Gains',
@@ -1085,8 +1522,10 @@ const FundFlow = {
                             backgroundColor: 'transparent',
                             borderDash: [5, 3],
                             tension: 0.4,
-                            pointRadius: 0
-                        }
+                            pointRadius: 0,
+                            order: 2
+                        },
+                        ...mcDatasets
                     ]
                 },
                 options: opts
@@ -1127,8 +1566,17 @@ const FundFlow = {
                     bodyColor: '#a1a1aa',
                     borderColor: '#27272a',
                     borderWidth: 1,
+                    filter: (tooltipItem) => {
+                        // Hide MC band datasets from tooltip to reduce noise
+                        const label = tooltipItem.dataset.label || '';
+                        return label !== '90th Percentile' && label !== '10th Percentile';
+                    },
                     callbacks: {
-                        label: (ctx) => ctx.dataset.label + ': ' + this.formatNumber(ctx.raw) + ' SEK',
+                        label: (ctx) => {
+                            // Handle both plain numbers and {x, y} objects
+                            const val = typeof ctx.raw === 'object' && ctx.raw !== null ? ctx.raw.y : ctx.raw;
+                            return ctx.dataset.label + ': ' + this.formatNumber(val) + ' SEK';
+                        },
                         afterBody: (tooltipItems) => {
                             const chart = tooltipItems[0]?.chart;
                             if (!chart) return [];
@@ -1172,12 +1620,17 @@ const FundFlow = {
             }
         };
 
+        // Quick Win 7: Zero line on projection chart (break-even indicator)
         if (isTimeSeries) {
             opts.scales.x.type = 'time';
             opts.scales.x.time = {
                 unit: 'year',
                 displayFormats: { year: 'yyyy' }
             };
+
+            // Add zero line as a custom plugin annotation via afterDraw
+            // We use the y scale to draw at y=0
+            opts.plugins.zeroLine = { enabled: true };
         }
 
         return opts;
@@ -1186,17 +1639,27 @@ const FundFlow = {
     calculateProjection(years) {
         const projections = [];
         const start = new Date(this.data.settings.fundStartDate);
+        const showReal = this.data.settings.showRealValues;
+        const inflRate = this.data.settings.inflationRate || 0.02;
         // Monthly points for smoother chart
         const totalMonths = years * 12;
 
         for (let i = 0; i <= totalMonths; i += 3) { // quarterly
             const date = new Date(start.getTime() + (i * 30.44 * 24 * 60 * 60 * 1000));
             const proj = this.project(date);
+
+            // Inflation discount: deflate future values to today's purchasing power
+            let discount = 1;
+            if (showReal) {
+                const yearsFromStart = i / 12;
+                discount = Math.pow(1 + inflRate, yearsFromStart);
+            }
+
             projections.push({
                 date: date.toISOString().split('T')[0],
-                balance: proj.principalReturnBalance,
-                principal: proj.principal,
-                gains: proj.gains
+                balance: proj.principalReturnBalance / discount,
+                principal: proj.principal / discount,
+                gains: proj.gains / discount
             });
         }
 
@@ -1208,10 +1671,29 @@ const FundFlow = {
         TimelinePlugin._state.xPixel = null;
         TimelinePlugin._state.dateLabel = null;
 
+        const canvas = document.getElementById('mainChart');
+        const priorityView = document.getElementById('priorityView');
+        const cashflowView = document.getElementById('cashflowView');
+
+        // Show/hide appropriate view containers
+        const isChartView = this.currentView === 'projection' || this.currentView === 'breakdown';
+        canvas.style.display = isChartView ? '' : 'none';
+        if (priorityView) priorityView.style.display = this.currentView === 'priority' ? '' : 'none';
+        if (cashflowView) cashflowView.style.display = this.currentView === 'cashflow' ? '' : 'none';
+
+        if (this.currentView === 'priority') {
+            this.renderPriorityQueue();
+            return;
+        }
+        if (this.currentView === 'cashflow') {
+            this.renderCashFlowLedger();
+            return;
+        }
+
         if (this.chart) {
             this.chart.destroy();
         }
-        const ctx = document.getElementById('mainChart').getContext('2d');
+        const ctx = canvas.getContext('2d');
         this.chart = new Chart(ctx, this.getChartConfig());
     },
 
@@ -1221,6 +1703,216 @@ const FundFlow = {
             tab.classList.toggle('active', tab.dataset.view === view);
         });
         this.updateChart();
+    },
+
+    // ========== PRIORITY QUEUE ==========
+    // Advanced Feature: "Fund This First" — ranks CapEx expenses by urgency.
+    // Urgency = how far behind the funding schedule an item is.
+
+    renderPriorityQueue() {
+        const container = document.getElementById('priorityView');
+        if (!container) return;
+
+        const proj = this.project(this.timelineDate);
+        const capexItems = proj.expenses.filter(e => e.type === 'capex');
+
+        if (capexItems.length === 0) {
+            container.innerHTML = '<div class="empty-state">No CapEx items to prioritize</div>';
+            return;
+        }
+
+        // Compute urgency: (scheduledDate - projectedDate) in days
+        // Negative = underfunded (projected AFTER scheduled), most urgent
+        // Positive = surplus time, least urgent
+        // Already funded (progress >= 100) = sorted to bottom
+        const ranked = capexItems.map(exp => {
+            let urgencyDays = Infinity;
+            let urgencyLabel = '';
+            let urgencyColor = 'var(--text-muted)';
+
+            if (exp.progress >= 100) {
+                urgencyLabel = 'Fully funded';
+                urgencyColor = 'var(--accent-primary)';
+                urgencyDays = Infinity;
+            } else if (exp.scheduledDate && exp.projectedDate) {
+                const schedMs = new Date(exp.scheduledDate).getTime();
+                const projMs = new Date(exp.projectedDate).getTime();
+                urgencyDays = (schedMs - projMs) / (24 * 60 * 60 * 1000);
+                if (urgencyDays < 0) {
+                    const monthsLate = Math.round(-urgencyDays / 30.44);
+                    urgencyLabel = monthsLate + ' month' + (monthsLate !== 1 ? 's' : '') + ' behind';
+                    urgencyColor = 'var(--accent-danger)';
+                } else if (urgencyDays < 180) {
+                    urgencyLabel = 'Tight — ' + Math.round(urgencyDays / 30.44) + ' months buffer';
+                    urgencyColor = 'var(--accent-warning)';
+                } else {
+                    urgencyLabel = Math.round(urgencyDays / 30.44) + ' months ahead';
+                    urgencyColor = 'var(--accent-success)';
+                }
+            } else if (exp.scheduledDate && !exp.projectedDate) {
+                urgencyLabel = 'No gains allocated';
+                urgencyColor = 'var(--accent-danger)';
+                urgencyDays = -Infinity;
+            } else {
+                urgencyLabel = 'No schedule';
+                urgencyDays = 0;
+            }
+
+            return { exp, urgencyDays, urgencyLabel, urgencyColor };
+        });
+
+        // Sort: most urgent first (lowest urgencyDays)
+        ranked.sort((a, b) => a.urgencyDays - b.urgencyDays);
+
+        let html = '<div style="padding: 0 12px;">';
+        html += '<div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; padding: 0 4px;">Fund These First</div>';
+
+        ranked.forEach((item, idx) => {
+            const exp = item.exp;
+            const rank = idx + 1;
+            const progressClass = exp.progress >= 100 ? '' : exp.progress >= 50 ? 'warning' : 'danger';
+
+            html += '<div style="display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-bottom: 1px solid var(--border);">';
+            html += '<span style="font-family: \'JetBrains Mono\', monospace; color: var(--text-muted); font-size: 0.75rem; min-width: 20px;">#' + rank + '</span>';
+            html += '<div style="flex: 1;">';
+            html += '<div style="display: flex; justify-content: space-between; align-items: center;">';
+            html += '<span style="font-weight: 500; font-size: 0.85rem;">' + this.escapeHtml(exp.name) + '</span>';
+            html += '<span style="font-size: 0.7rem; color: ' + item.urgencyColor + '; font-weight: 600;">' + item.urgencyLabel + '</span>';
+            html += '</div>';
+            html += '<div class="progress-bar" style="margin-top: 4px;">';
+            html += '<div class="progress-fill ' + progressClass + '" style="width: ' + Math.min(exp.progress, 100) + '%"></div>';
+            html += '</div>';
+            html += '<div style="display: flex; justify-content: space-between; font-size: 0.65rem; color: var(--text-muted); margin-top: 2px;">';
+            html += '<span>' + exp.progress.toFixed(0) + '% \u2014 ' + this.formatNumber(exp.cost) + ' SEK</span>';
+            html += '<span>' + (exp.scheduledDate ? 'Due: ' + exp.scheduledDate : '') + '</span>';
+            html += '</div>';
+            html += '</div>';
+            html += '</div>';
+        });
+
+        html += '</div>';
+        container.innerHTML = html;
+    },
+
+    // ========== CASH FLOW LEDGER ==========
+    // Advanced Feature: Monthly cash flow schedule showing concrete inflows/outflows.
+
+    renderCashFlowLedger() {
+        const container = document.getElementById('cashflowView');
+        if (!container) return;
+
+        const settings = this.data.settings;
+        const fundStart = new Date(settings.fundStartDate);
+        const expenses = this.data.expenses;
+        const events = this.data.events;
+        const rate = this.getCurrentRate();
+
+        // Generate 24 months of cash flow from current timeline date
+        const startDate = new Date(this.timelineDate);
+        const months = [];
+
+        for (let i = 0; i < 24; i++) {
+            const mDate = new Date(startDate.getFullYear(), startDate.getMonth() + i, 1);
+            const mEnd = new Date(startDate.getFullYear(), startDate.getMonth() + i + 1, 0);
+            const mStr = mDate.toISOString().split('T')[0].slice(0, 7); // YYYY-MM
+
+            let inflows = 0;
+            let outflows = 0;
+            const details = [];
+
+            // Deposits in this month
+            events.forEach(ev => {
+                if (ev.type !== 'deposit') return;
+                const evDate = new Date(ev.date);
+                if (evDate >= mDate && evDate <= mEnd) {
+                    inflows += ev.amount;
+                    details.push({ type: 'deposit', label: 'Deposit', amount: ev.amount });
+                }
+            });
+
+            // Estimate monthly gains (simplified: principal * rate / 12)
+            const proj = this.project(mDate);
+            const monthlyGain = proj.effectiveBase * proj.rate / 12;
+            if (monthlyGain > 0) {
+                inflows += monthlyGain;
+                details.push({ type: 'gain', label: 'Est. gains', amount: monthlyGain });
+            }
+
+            // OpEx payments this month
+            expenses.forEach(exp => {
+                if (exp.type !== 'opex') return;
+                const expStart = exp.lastProcurementDate ? new Date(exp.lastProcurementDate) : fundStart;
+                if (mDate >= expStart || mDate >= fundStart) {
+                    const monthlyCost = exp.billingCycle === 'monthly' ? exp.cost : exp.cost / 12;
+                    outflows += monthlyCost;
+                    details.push({ type: 'opex', label: exp.name, amount: -monthlyCost });
+                }
+            });
+
+            // Scheduled CapEx procurements this month
+            expenses.forEach(exp => {
+                if (exp.type !== 'capex') return;
+                const lastProc = exp.lastProcurementDate ? new Date(exp.lastProcurementDate) : fundStart;
+                const scheduled = new Date(lastProc.getTime() + (exp.interval * 365.25 * 24 * 60 * 60 * 1000));
+                if (scheduled >= mDate && scheduled <= mEnd) {
+                    outflows += exp.cost;
+                    details.push({ type: 'capex', label: exp.name + ' (CapEx)', amount: -exp.cost });
+                }
+            });
+
+            // Recorded procurements this month (already happened)
+            events.forEach(ev => {
+                if (ev.type !== 'procurement') return;
+                const evDate = new Date(ev.date);
+                if (evDate >= mDate && evDate <= mEnd) {
+                    // Don't double-count with scheduled above — check if already counted
+                    const alreadyCounted = details.some(d => d.type === 'capex' && d.label.startsWith(ev.expenseName || ''));
+                    if (!alreadyCounted) {
+                        outflows += ev.cost;
+                        details.push({ type: 'procurement', label: (ev.expenseName || 'Purchase') + ' (recorded)', amount: -ev.cost });
+                    }
+                }
+            });
+
+            const net = inflows - outflows;
+            months.push({ month: mStr, inflows, outflows, net, details });
+        }
+
+        // Render as table
+        let html = '<div style="padding: 0 8px; font-size: 0.75rem;">';
+        html += '<table style="width: 100%; border-collapse: collapse;">';
+        html += '<thead><tr style="color: var(--text-muted); text-transform: uppercase; font-size: 0.65rem; letter-spacing: 0.3px;">';
+        html += '<th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border);">Month</th>';
+        html += '<th style="text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--border);">Inflows</th>';
+        html += '<th style="text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--border);">Outflows</th>';
+        html += '<th style="text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--border);">Net</th>';
+        html += '<th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border);">Events</th>';
+        html += '</tr></thead><tbody>';
+
+        let runningBalance = 0;
+        months.forEach(m => {
+            runningBalance += m.net;
+            const netColor = m.net >= 0 ? 'var(--accent-primary)' : 'var(--accent-danger)';
+            const hasCapex = m.details.some(d => d.type === 'capex' || d.type === 'procurement');
+            const rowBg = hasCapex ? 'background: rgba(245, 158, 11, 0.04);' : '';
+
+            html += '<tr style="border-bottom: 1px solid var(--border); ' + rowBg + '">';
+            html += '<td style="padding: 5px 6px; font-family: \'JetBrains Mono\', monospace; color: var(--text-muted);">' + m.month + '</td>';
+            html += '<td style="padding: 5px 6px; text-align: right; font-family: \'JetBrains Mono\', monospace; color: var(--accent-success);">' + this.formatNumber(m.inflows) + '</td>';
+            html += '<td style="padding: 5px 6px; text-align: right; font-family: \'JetBrains Mono\', monospace; color: var(--accent-danger);">' + this.formatNumber(m.outflows) + '</td>';
+            html += '<td style="padding: 5px 6px; text-align: right; font-family: \'JetBrains Mono\', monospace; color: ' + netColor + ';">' + (m.net >= 0 ? '+' : '') + this.formatNumber(m.net) + '</td>';
+
+            // Compact event labels
+            const eventLabels = m.details
+                .filter(d => d.type !== 'gain') // skip routine gains
+                .map(d => d.label)
+                .join(', ');
+            html += '<td style="padding: 5px 6px; color: var(--text-muted); font-size: 0.65rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + eventLabels + '</td>';
+            html += '</tr>';
+        });
+
+        html += '</tbody></table></div>';
+        container.innerHTML = html;
     },
 
     // ========== MODALS ==========
@@ -1357,6 +2049,22 @@ const FundFlow = {
         document.getElementById('procurementDate').value = this.timelineDate.toISOString().split('T')[0];
         document.getElementById('procurementCost').value = exp.cost;
         document.getElementById('procurementNote').value = '';
+
+        // Quick Win 10: Show warning if item is underfunded
+        const warningEl = document.getElementById('procurementFundingWarning');
+        if (warningEl) {
+            const proj = this.project(this.timelineDate);
+            const projExp = proj.expenses.find(e => e.id === expenseId);
+            if (projExp && projExp.progress < 100 && projExp.type === 'capex') {
+                warningEl.textContent = 'This item is only ' + projExp.progress.toFixed(0) + '% funded (' +
+                    this.formatNumber(projExp.allocatedGains) + ' of ' + this.formatNumber(exp.cost) +
+                    ' SEK). Proceeding will deduct the full cost from your gains/principal.';
+                warningEl.style.display = '';
+            } else {
+                warningEl.style.display = 'none';
+            }
+        }
+
         document.getElementById('procurementModal').classList.add('open');
     },
 
@@ -1465,6 +2173,10 @@ const FundFlow = {
         this.editingEventId = eventId;
         const modal = document.getElementById('eventModal');
 
+        // Clear deposit preview
+        const previewEl = document.getElementById('depositPreview');
+        if (previewEl) previewEl.style.display = 'none';
+
         if (eventId) {
             const ev = this.data.events.find(e => e.id === eventId);
             if (ev) {
@@ -1501,6 +2213,88 @@ const FundFlow = {
         const showRate = type === 'rate_change';
         document.getElementById('eventAmountGroup').style.display = showAmount ? 'block' : 'none';
         document.getElementById('eventRateGroup').style.display = showRate ? 'block' : 'none';
+
+        // Show/hide deposit preview
+        const previewEl = document.getElementById('depositPreview');
+        if (previewEl) {
+            previewEl.style.display = showAmount ? '' : 'none';
+            if (showAmount) this._updateDepositPreview();
+        }
+    },
+
+    /**
+     * Live deposit impact preview — shows what adding X SEK will do.
+     *
+     * Computes the difference between current state and state-with-deposit,
+     * showing: monthly gain increase, newly funded items, and new PR balance.
+     *
+     * Called on every keystroke in the deposit amount field.
+     */
+    _updateDepositPreview() {
+        const previewEl = document.getElementById('depositPreview');
+        if (!previewEl) return;
+
+        const activeType = document.querySelector('.event-type-btn.active');
+        if (!activeType || activeType.dataset.type !== 'deposit') {
+            previewEl.style.display = 'none';
+            return;
+        }
+
+        const amount = parseFloat(document.getElementById('eventAmount').value);
+        if (isNaN(amount) || amount <= 0) {
+            previewEl.innerHTML = '<span style="color: var(--text-muted); font-size: 0.72rem;">Enter an amount to see impact preview</span>';
+            previewEl.style.display = '';
+            return;
+        }
+
+        // Project current state
+        const currentProj = this.project(this.timelineDate);
+
+        // Project with the deposit added (temporarily add a synthetic deposit event)
+        const date = document.getElementById('eventDate').value || new Date().toISOString().split('T')[0];
+        const tempEvent = {
+            id: '__preview__',
+            type: 'deposit',
+            date: date,
+            amount: amount,
+            createdAt: new Date().toISOString()
+        };
+        this.data.events.push(tempEvent);
+        const newProj = this.project(this.timelineDate);
+        // Remove the temporary event
+        this.data.events = this.data.events.filter(e => e.id !== '__preview__');
+
+        // Compute diffs
+        const monthlyGainDiff = (newProj.annualGainAmount - currentProj.annualGainAmount) / 12;
+        const balanceDiff = newProj.principalReturnBalance - currentProj.principalReturnBalance;
+
+        // Check which items become newly funded
+        const newlyFunded = [];
+        newProj.expenses.forEach((newExp, i) => {
+            if (i < currentProj.expenses.length) {
+                const oldExp = currentProj.expenses[i];
+                if (newExp.isFunded && !oldExp.isFunded) {
+                    newlyFunded.push(newExp.name);
+                }
+            }
+        });
+
+        let html = '<div style="font-size: 0.72rem; color: var(--text-secondary); line-height: 1.6;">';
+        html += '<div style="font-weight: 600; color: var(--accent-primary); margin-bottom: 4px;">Impact Preview</div>';
+        html += '<div>Monthly gains: <strong>+' + this.formatNumber(monthlyGainDiff) + ' SEK/mo</strong></div>';
+        html += '<div>PR Balance: <strong>' + (balanceDiff >= 0 ? '+' : '') + this.formatNumber(balanceDiff) + ' SEK</strong></div>';
+        if (newlyFunded.length > 0) {
+            html += '<div style="color: var(--accent-success);">Fully funds: <strong>' + newlyFunded.join(', ') + '</strong></div>';
+        }
+        if (newProj.isDrainingPrincipal && !currentProj.isDrainingPrincipal) {
+            // Shouldn't happen with a deposit, but safety check
+        } else if (currentProj.isDrainingPrincipal && !newProj.isDrainingPrincipal) {
+            html += '<div style="color: var(--accent-success);">Stops principal drain!</div>';
+        }
+        html += '</div>';
+
+        previewEl.innerHTML = html;
+        previewEl.style.display = '';
     },
 
     saveEvent() {

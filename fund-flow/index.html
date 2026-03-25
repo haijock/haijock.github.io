@@ -469,6 +469,7 @@
                 <div class="balance-display">
                     <div class="balance-label">Principal Return Balance</div>
                     <div class="balance-value" id="prBalance">0 SEK</div>
+                    <div id="balanceHint" class="help-text" style="display: none; font-size: 0.65rem;"></div>
                     <div class="help-text">Investment gains minus all spending. Negative = eating into principal.</div>
                 </div>
                 <div class="header-stats">
@@ -480,7 +481,7 @@
                         <div class="stat-value" id="gainsDisplay">0 SEK</div>
                         <div class="stat-label">Gains</div>
                     </div>
-                    <div class="stat-item">
+                    <div class="stat-item" title="The minimum principal needed so annual gains (at current rate) cover all expenses without touching capital">
                         <div class="stat-value" id="requiredPrincipalDisplay">0 SEK</div>
                         <div class="stat-label">Required</div>
                     </div>
@@ -519,10 +520,16 @@
                 <div class="chart-tabs">
                     <button class="chart-tab active" data-view="projection">Projection</button>
                     <button class="chart-tab" data-view="breakdown">Breakdown</button>
+                    <button class="chart-tab" data-view="priority">Priority</button>
+                    <button class="chart-tab" data-view="cashflow">Cash Flow</button>
                 </div>
             </div>
             <div class="chart-container" id="chartContainer">
                 <canvas id="mainChart"></canvas>
+                <!-- Priority queue (non-chart view) -->
+                <div id="priorityView" style="display: none; overflow-y: auto; height: 100%; padding: 8px 0;"></div>
+                <!-- Cash flow ledger (non-chart view) -->
+                <div id="cashflowView" style="display: none; overflow-y: auto; height: 100%; padding: 8px 0;"></div>
             </div>
             <div class="chart-timeline-hint">Click chart to set date &middot; Drag to scrub &middot; Double-click to reset &middot; All numbers update to the selected date</div>
         </div>
@@ -552,6 +559,7 @@
                 <div class="setting-group">
                     <span class="setting-label">Principal</span>
                     <input type="number" class="form-input" id="initialPrincipal" value="135000">
+                    <span id="monthlyGainHint" class="help-text-inline" style="white-space: nowrap;"></span>
                 </div>
                 <div class="setting-group">
                     <span class="setting-label">Rate</span>
@@ -559,6 +567,7 @@
                         <input type="range" class="range-input" id="returnRate" min="1" max="15" value="7" step="0.5" style="width:80px;">
                         <span class="range-value" id="returnRateValue">7%</span>
                     </div>
+                    <span id="rateWarning" class="help-text-inline" style="display: none; color: var(--accent-warning); white-space: nowrap;"></span>
                 </div>
                 <div class="setting-group">
                     <span class="setting-label">Account</span>
@@ -573,10 +582,18 @@
                     <input type="date" class="form-input" id="fundStartDate" style="width:140px;">
                 </div>
                 <div class="setting-group">
-                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;" title="When a CapEx item is 100% funded, its excess allocated gains flow to other unfunded items, helping them fund faster">
                         <input type="checkbox" id="redistributeToggle" checked>
                         <span class="setting-label" style="margin: 0;">Redistribute surplus</span>
                     </label>
+                </div>
+                <div class="setting-group">
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;" title="Show chart in real (inflation-adjusted) terms. Discounts future values by the inflation rate so you see today's purchasing power.">
+                        <input type="checkbox" id="inflationToggle">
+                        <span class="setting-label" style="margin: 0;">Real (inflation-adj.)</span>
+                    </label>
+                    <input type="number" class="form-input" id="inflationRate" value="2" min="0" max="15" step="0.5" style="width: 55px; font-size: 0.75rem; padding: 3px 5px;" title="Assumed annual inflation rate (%)">
+                    <span class="help-text-inline">%</span>
                 </div>
             </div>
             <div style="padding: 4px 16px 8px; background: var(--bg-secondary); border-bottom: 1px solid var(--border);">
@@ -650,6 +667,7 @@
             </div>
             <div class="modal-body">
                 <p id="procurementExpenseName" style="font-weight: 500; margin-bottom: 12px;"></p>
+                <div id="procurementFundingWarning" style="display: none; padding: 8px 10px; margin-bottom: 10px; background: rgba(245, 158, 11, 0.1); border: 1px solid var(--accent-warning); border-radius: 6px; font-size: 0.75rem; color: var(--accent-warning);"></div>
                 <div class="help-text" style="margin-bottom: 10px;">
                     Record an actual purchase. This deducts the cost from gains and resets the funding progress for this item.
                 </div>
@@ -701,6 +719,7 @@
                     <label class="form-label">Rate (%)</label>
                     <input type="number" class="form-input" id="eventRate" step="0.5">
                 </div>
+                <div id="depositPreview" style="display: none; padding: 10px 12px; margin-bottom: 10px; background: rgba(0, 212, 170, 0.06); border: 1px solid rgba(0, 212, 170, 0.2); border-radius: 6px;"></div>
                 <div class="button-row">
                     <button class="btn btn-primary" id="saveEvent">Save</button>
                     <button class="btn btn-secondary" id="cancelEvent">Cancel</button>
