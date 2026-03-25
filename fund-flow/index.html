@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FundFlow - Self-Funded Procurement Planner</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-tertiary: #1a1a24;
+            --bg-card: #16161f;
+            --accent-primary: #00d4aa;
+            --accent-secondary: #7c3aed;
+            --accent-warning: #f59e0b;
+            --accent-danger: #ef4444;
+            --accent-success: #10b981;
+            --text-primary: #f4f4f5;
+            --text-secondary: #a1a1aa;
+            --text-muted: #71717a;
+            --border: #27272a;
+            --border-light: #3f3f46;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        .app-container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+
+        /* ========== HEADER ========== */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .header-left { display: flex; align-items: center; gap: 16px; }
+        .logo { display: flex; align-items: center; gap: 10px; }
+        .logo-icon {
+            width: 36px; height: 36px;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            border-radius: 9px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px;
+        }
+        .logo h1 {
+            font-size: 1.3rem; font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header-center {
+            display: flex; align-items: center; gap: 20px;
+            flex: 1; justify-content: center;
+        }
+        .balance-display {
+            text-align: center;
+            padding: 8px 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+        }
+        .balance-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+        .balance-value {
+            font-size: 1.5rem; font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent-primary);
+        }
+        .balance-value.warning { color: var(--accent-warning); }
+        .balance-value.danger { color: var(--accent-danger); }
+
+        .header-stats { display: flex; gap: 20px; }
+        .stat-item { text-align: right; }
+        .stat-value {
+            font-size: 1rem; font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .stat-label { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; }
+
+        .header-right { display: flex; align-items: center; gap: 8px; }
+
+        .btn {
+            padding: 7px 13px; border: none; border-radius: 6px;
+            font-size: 0.8rem; font-weight: 500; cursor: pointer; transition: all 0.2s;
+            font-family: 'DM Sans', sans-serif;
+        }
+        .btn-primary { background: var(--accent-primary); color: var(--bg-primary); }
+        .btn-primary:hover { background: #00e6b8; }
+        .btn-secondary { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); }
+        .btn-secondary:hover { background: var(--border); }
+        .btn-danger { background: var(--accent-danger); color: white; }
+        .btn-sm { padding: 5px 10px; font-size: 0.7rem; }
+        .btn-ghost {
+            background: none; color: var(--text-secondary); border: 1px solid var(--border);
+            padding: 6px 10px; border-radius: 6px; font-size: 0.8rem; cursor: pointer;
+        }
+        .btn-ghost:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+
+        /* Today button */
+        .btn-today {
+            background: var(--bg-tertiary); color: var(--accent-primary);
+            border: 1px solid var(--accent-primary); padding: 5px 10px;
+            border-radius: 6px; font-size: 0.75rem; font-weight: 600; cursor: pointer;
+        }
+        .btn-today:hover { background: rgba(0, 212, 170, 0.15); }
+
+        /* Dropdown menu */
+        .dropdown { position: relative; }
+        .dropdown-toggle {
+            background: var(--bg-tertiary); border: 1px solid var(--border);
+            color: var(--text-secondary); padding: 6px 10px; border-radius: 6px;
+            cursor: pointer; font-size: 1rem; line-height: 1;
+        }
+        .dropdown-toggle:hover { color: var(--text-primary); background: var(--border); }
+        .dropdown-menu {
+            display: none; position: absolute; right: 0; top: 100%; margin-top: 4px;
+            background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+            min-width: 160px; z-index: 100; overflow: hidden;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+        }
+        .dropdown-menu.open { display: block; }
+        .dropdown-item {
+            display: block; width: 100%; padding: 9px 14px; border: none;
+            background: none; color: var(--text-secondary); font-size: 0.8rem;
+            text-align: left; cursor: pointer; font-family: 'DM Sans', sans-serif;
+        }
+        .dropdown-item:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+        .dropdown-item.danger { color: var(--accent-danger); }
+        .dropdown-item.danger:hover { background: rgba(239, 68, 68, 0.1); }
+        .dropdown-divider { height: 1px; background: var(--border); margin: 4px 0; }
+
+        /* ========== CHART ========== */
+        .chart-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .chart-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 10px;
+        }
+        .chart-header-left { display: flex; align-items: center; gap: 12px; }
+        .card-title {
+            font-size: 0.8rem; font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .chart-tabs { display: flex; gap: 4px; padding: 3px; background: var(--bg-tertiary); border-radius: 6px; }
+        .chart-tab {
+            padding: 5px 10px; border: none; background: none;
+            color: var(--text-muted); font-size: 0.75rem; cursor: pointer;
+            border-radius: 4px; transition: all 0.2s;
+            font-family: 'DM Sans', sans-serif;
+        }
+        .chart-tab.active { background: var(--bg-card); color: var(--text-primary); }
+
+        .draining-warning {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 3px 8px; background: rgba(239, 68, 68, 0.15);
+            border: 1px solid var(--accent-danger); border-radius: 5px;
+            color: var(--accent-danger); font-size: 0.65rem; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.3px;
+        }
+
+        .chart-container { position: relative; height: 260px; cursor: crosshair; }
+
+        .chart-timeline-hint {
+            text-align: center; margin-top: 6px;
+            font-size: 0.7rem; color: var(--text-muted);
+        }
+
+        /* ========== UNIFIED LIST ========== */
+        .list-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        .list-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 12px 16px; border-bottom: 1px solid var(--border);
+            background: var(--bg-secondary);
+        }
+        .list-header-left { display: flex; align-items: center; gap: 12px; }
+        .list-title { font-size: 0.85rem; font-weight: 600; }
+
+        /* Filter tabs */
+        .filter-tabs {
+            display: flex; gap: 2px; padding: 3px;
+            background: var(--bg-tertiary); border-radius: 6px;
+        }
+        .filter-tab {
+            padding: 4px 10px; border: none; background: none;
+            color: var(--text-muted); font-size: 0.7rem; cursor: pointer;
+            border-radius: 4px; transition: all 0.2s;
+            font-family: 'DM Sans', sans-serif; white-space: nowrap;
+        }
+        .filter-tab.active { background: var(--bg-card); color: var(--text-primary); }
+        .filter-tab .count {
+            display: inline-block; min-width: 16px; text-align: center;
+            padding: 0 4px; margin-left: 3px;
+            background: var(--bg-tertiary); border-radius: 3px;
+            font-size: 0.6rem; font-family: 'JetBrains Mono', monospace;
+        }
+        .filter-tab.active .count { background: var(--bg-tertiary); }
+
+        /* Pinned fund settings row */
+        .fund-settings-row {
+            display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-secondary);
+            font-size: 0.85rem;
+        }
+        .fund-settings-row .setting-group {
+            display: flex; align-items: center; gap: 6px;
+        }
+        .fund-settings-row .setting-label {
+            font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;
+        }
+        .fund-settings-row .form-input,
+        .fund-settings-row .select-input {
+            padding: 4px 8px; font-size: 0.8rem; width: auto;
+        }
+        .fund-settings-row .form-input { width: 120px; }
+        .fund-settings-row .select-input { width: 130px; }
+        .fund-settings-row input[type="checkbox"] {
+            accent-color: var(--accent-primary);
+            width: 14px; height: 14px; cursor: pointer;
+        }
+
+        /* List items common */
+        .list-body { min-height: 60px; }
+        .empty-state { padding: 30px; text-align: center; color: var(--text-muted); font-size: 0.85rem; }
+
+        /* Expense row (rich card) */
+        .expense-row {
+            display: grid; grid-template-columns: 1fr auto auto;
+            gap: 12px; align-items: start;
+            padding: 14px 16px; border-bottom: 1px solid var(--border);
+            transition: background 0.15s;
+        }
+        .expense-row:hover { background: var(--bg-secondary); }
+        .expense-row:last-child { border-bottom: none; }
+        .expense-info { display: flex; flex-direction: column; gap: 5px; }
+        .expense-name-row { display: flex; align-items: center; gap: 8px; }
+        .expense-name { font-weight: 500; font-size: 0.95rem; }
+        .expense-type {
+            padding: 2px 6px; border-radius: 4px; font-size: 0.6rem;
+            font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px;
+        }
+        .expense-type.capex { background: rgba(0, 212, 170, 0.15); color: var(--accent-primary); }
+        .expense-type.opex { background: rgba(245, 158, 11, 0.15); color: var(--accent-warning); }
+        .expense-meta { font-size: 0.78rem; color: var(--text-muted); display: flex; gap: 12px; flex-wrap: wrap; }
+        .expense-cost { font-family: 'JetBrains Mono', monospace; font-weight: 500; white-space: nowrap; }
+
+        .expense-actions { display: flex; gap: 4px; }
+        .icon-btn {
+            background: none; border: none; color: var(--text-muted);
+            cursor: pointer; padding: 4px 6px; border-radius: 4px; font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .icon-btn:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+        .icon-btn.danger:hover { color: var(--accent-danger); }
+
+        .progress-section { margin-top: 6px; }
+        .progress-bar {
+            height: 5px; background: var(--bg-tertiary); border-radius: 3px; overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%; border-radius: 3px; transition: width 0.3s;
+            background: var(--accent-primary);
+        }
+        .progress-fill.warning { background: var(--accent-warning); }
+        .progress-fill.danger { background: var(--accent-danger); }
+        .progress-info {
+            display: flex; justify-content: space-between; font-size: 0.7rem; margin-top: 3px;
+        }
+        .progress-percent { font-family: 'JetBrains Mono', monospace; }
+        .progress-dates { color: var(--text-muted); }
+
+        .opex-info { margin-top: 4px; font-size: 0.78rem; color: var(--text-secondary); }
+
+        /* Event row (simple) */
+        .event-row {
+            display: flex; align-items: center; gap: 10px;
+            padding: 10px 16px; border-bottom: 1px solid var(--border);
+            font-size: 0.82rem; transition: background 0.15s;
+        }
+        .event-row:hover { background: var(--bg-secondary); }
+        .event-row:last-child { border-bottom: none; }
+        .event-date {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-muted); min-width: 85px; font-size: 0.75rem;
+        }
+        .event-icon { font-size: 0.85rem; width: 20px; text-align: center; }
+        .event-badge {
+            padding: 2px 6px; border-radius: 4px; font-size: 0.6rem;
+            font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px;
+        }
+        .event-badge.deposit { background: rgba(16, 185, 129, 0.15); color: var(--accent-success); }
+        .event-badge.rate { background: rgba(124, 58, 237, 0.15); color: var(--accent-secondary); }
+        .event-badge.settings { background: rgba(161, 161, 170, 0.15); color: var(--text-secondary); }
+        .event-desc { flex: 1; }
+        .event-value {
+            font-family: 'JetBrains Mono', monospace; font-weight: 500;
+            white-space: nowrap;
+        }
+        .event-actions { display: flex; gap: 4px; }
+
+        /* Inline edit for event rows */
+        .inline-edit-input {
+            padding: 3px 6px; background: var(--bg-tertiary);
+            border: 1px solid var(--accent-primary); border-radius: 4px;
+            color: var(--text-primary); font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem; width: 100px;
+        }
+
+        /* ========== FORM INPUTS ========== */
+        .form-group { margin-bottom: 12px; }
+        .form-group:last-child { margin-bottom: 0; }
+        .form-label {
+            display: block; font-size: 0.75rem;
+            color: var(--text-muted); margin-bottom: 4px;
+        }
+        .form-input {
+            width: 100%; padding: 8px 10px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+        }
+        .form-input:focus { outline: none; border-color: var(--accent-primary); }
+        .select-input {
+            width: 100%; padding: 8px 10px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary); font-size: 0.85rem; cursor: pointer;
+        }
+        .range-group { display: flex; align-items: center; gap: 8px; }
+        .range-input {
+            flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
+            background: var(--bg-tertiary); border-radius: 2px; cursor: pointer;
+        }
+        .range-input::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 14px; height: 14px;
+            background: var(--accent-primary); border-radius: 50%; cursor: pointer;
+        }
+        .range-value {
+            min-width: 40px; text-align: right;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem; color: var(--accent-primary);
+        }
+
+        .type-toggle { display: flex; gap: 8px; margin-bottom: 14px; }
+        .type-btn {
+            flex: 1; padding: 10px; border: 1px solid var(--border);
+            border-radius: 6px; background: var(--bg-tertiary);
+            color: var(--text-secondary); cursor: pointer; font-size: 0.85rem;
+            transition: all 0.2s; text-align: center;
+            font-family: 'DM Sans', sans-serif;
+        }
+        .type-btn.active { border-color: var(--accent-primary); background: rgba(0, 212, 170, 0.1); color: var(--accent-primary); }
+        .type-btn:hover:not(.active) { border-color: var(--border-light); }
+
+        .event-type-select { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+        .event-type-btn {
+            padding: 6px 10px; border: 1px solid var(--border);
+            border-radius: 4px; background: var(--bg-tertiary);
+            color: var(--text-muted); cursor: pointer; font-size: 0.75rem;
+            font-family: 'DM Sans', sans-serif;
+        }
+        .event-type-btn.active { border-color: var(--accent-secondary); background: rgba(124, 58, 237, 0.15); color: var(--accent-secondary); }
+
+        .button-row { display: flex; gap: 8px; margin-top: 14px; }
+        .button-row .btn { flex: 1; }
+
+        /* ========== MODALS ========== */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.8); display: flex;
+            align-items: center; justify-content: center; z-index: 1000;
+            opacity: 0; visibility: hidden; transition: all 0.3s;
+        }
+        .modal-overlay.open { opacity: 1; visibility: visible; }
+        .modal {
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: 12px; width: 90%; max-width: 420px;
+            max-height: 90vh; overflow-y: auto;
+            transform: translateY(20px); transition: transform 0.3s;
+        }
+        .modal-overlay.open .modal { transform: translateY(0); }
+        .modal-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 14px 16px; border-bottom: 1px solid var(--border);
+        }
+        .modal-title { font-size: 1rem; font-weight: 600; }
+        .modal-close {
+            background: none; border: none; color: var(--text-muted);
+            font-size: 1.3rem; cursor: pointer;
+        }
+        .modal-body { padding: 16px; }
+
+        /* ========== SCROLLBAR ========== */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg-secondary); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+        /* ========== HELP TEXT ========== */
+        .help-text {
+            font-size: 0.68rem; color: var(--text-muted); line-height: 1.5;
+            margin-top: 4px; opacity: 0.8;
+        }
+        .help-text-inline {
+            font-size: 0.65rem; color: var(--text-muted); opacity: 0.7;
+        }
+
+        /* ========== RESPONSIVE ========== */
+        @media (max-width: 700px) {
+            header { flex-direction: column; align-items: stretch; }
+            .header-center { justify-content: flex-start; }
+            .header-stats { justify-content: flex-start; }
+            .expense-row { grid-template-columns: 1fr; gap: 8px; }
+            .fund-settings-row { flex-direction: column; align-items: stretch; }
+            .fund-settings-row .form-input,
+            .fund-settings-row .select-input { width: 100%; }
+            .filter-tabs { flex-wrap: wrap; }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- ===== HEADER ===== -->
+        <header>
+            <div class="header-left">
+                <div class="logo">
+                    <div class="logo-icon">&#x25C8;</div>
+                    <h1>FundFlow</h1>
+                </div>
+                <button class="btn-today" id="todayBtn" title="Reset timeline to today">Today</button>
+            </div>
+
+            <div class="header-center">
+                <div class="balance-display">
+                    <div class="balance-label">Principal Return Balance</div>
+                    <div class="balance-value" id="prBalance">0 SEK</div>
+                    <div class="help-text">Investment gains minus all spending. Negative = eating into principal.</div>
+                </div>
+                <div class="header-stats">
+                    <div class="stat-item">
+                        <div class="stat-value" id="principalDisplay">0 SEK</div>
+                        <div class="stat-label">Principal</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="gainsDisplay">0 SEK</div>
+                        <div class="stat-label">Gains</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="requiredPrincipalDisplay">0 SEK</div>
+                        <div class="stat-label">Required</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="header-right">
+                <button class="dropdown-toggle" id="copyStateBtn" title="Copy state to clipboard">&#x1f4cb;</button>
+                <div class="dropdown">
+                    <button class="dropdown-toggle" id="menuToggle" title="Actions">&#x2699;</button>
+                    <div class="dropdown-menu" id="menuDropdown">
+                        <button class="dropdown-item" id="exportBtn">Export JSON</button>
+                        <button class="dropdown-item" id="importBtn">Import JSON</button>
+                        <div class="dropdown-divider"></div>
+                        <button class="dropdown-item danger" id="resetBtn">Reset All Data</button>
+                    </div>
+                </div>
+                <input type="file" id="fileInput" accept=".json" style="display: none;">
+            </div>
+        </header>
+
+        <div class="help-text" style="margin-bottom: 12px; text-align: center;">
+            Plan how much to invest so that returns fund your recurring purchases and subscriptions &mdash; without touching the principal.
+        </div>
+
+        <!-- ===== CHART ===== -->
+        <div class="chart-card">
+            <div class="chart-header">
+                <div class="chart-header-left">
+                    <span class="card-title">Portfolio Projection</span>
+                    <span id="timelineDateDisplay" style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-muted);"></span>
+                    <span id="drainingWarning" class="draining-warning" style="display: none;">
+                        &#x26A0; Draining Principal
+                    </span>
+                </div>
+                <div class="chart-tabs">
+                    <button class="chart-tab active" data-view="projection">Projection</button>
+                    <button class="chart-tab" data-view="breakdown">Breakdown</button>
+                </div>
+            </div>
+            <div class="chart-container" id="chartContainer">
+                <canvas id="mainChart"></canvas>
+            </div>
+            <div class="chart-timeline-hint">Click chart to set date &middot; Drag to scrub &middot; Double-click to reset &middot; All numbers update to the selected date</div>
+        </div>
+
+        <!-- ===== UNIFIED LIST ===== -->
+        <div class="list-card">
+            <div class="list-header">
+                <div class="list-header-left">
+                    <span class="list-title">Events &amp; Expenses</span>
+                    <div class="filter-tabs" id="filterTabs">
+                        <button class="filter-tab active" data-filter="all">All</button>
+                        <button class="filter-tab" data-filter="expenses">Expenses</button>
+                        <button class="filter-tab" data-filter="capex">CapEx</button>
+                        <button class="filter-tab" data-filter="opex">OpEx</button>
+                        <button class="filter-tab" data-filter="deposits">Deposits</button>
+                        <button class="filter-tab" data-filter="rates">Rates</button>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 6px;">
+                    <button class="btn btn-secondary btn-sm" id="addEventBtn">+ Event</button>
+                    <button class="btn btn-primary btn-sm" id="addExpenseBtn">+ Expense</button>
+                </div>
+            </div>
+
+            <!-- Pinned fund settings row -->
+            <div class="fund-settings-row" id="fundSettingsRow">
+                <div class="setting-group">
+                    <span class="setting-label">Principal</span>
+                    <input type="number" class="form-input" id="initialPrincipal" value="135000">
+                </div>
+                <div class="setting-group">
+                    <span class="setting-label">Rate</span>
+                    <div class="range-group">
+                        <input type="range" class="range-input" id="returnRate" min="1" max="15" value="7" step="0.5" style="width:80px;">
+                        <span class="range-value" id="returnRateValue">7%</span>
+                    </div>
+                </div>
+                <div class="setting-group">
+                    <span class="setting-label">Account</span>
+                    <select class="select-input" id="accountType">
+                        <option value="isk">ISK</option>
+                        <option value="traditional">Traditional</option>
+                        <option value="brokerage">Brokerage</option>
+                    </select>
+                </div>
+                <div class="setting-group">
+                    <span class="setting-label">Start</span>
+                    <input type="date" class="form-input" id="fundStartDate" style="width:140px;">
+                </div>
+                <div class="setting-group">
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" id="redistributeToggle" checked>
+                        <span class="setting-label" style="margin: 0;">Redistribute surplus</span>
+                    </label>
+                </div>
+            </div>
+            <div style="padding: 4px 16px 8px; background: var(--bg-secondary); border-bottom: 1px solid var(--border);">
+                <div class="help-text">
+                    <strong>Principal</strong> = lump sum invested. <strong>Rate</strong> = expected annual return.
+                    <strong>Required</strong> = minimum principal needed so annual gains cover all expenses.
+                    <strong>Redistribute</strong> = when a CapEx is fully funded, its surplus gains flow to unfunded items.
+                </div>
+            </div>
+
+            <div class="list-body" id="unifiedList">
+                <div class="empty-state">No events or expenses yet</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== EXPENSE MODAL ===== -->
+    <div class="modal-overlay" id="expenseModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="expenseModalTitle">Add Expense</h2>
+                <button class="modal-close" id="closeExpenseModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="type-toggle">
+                    <button class="type-btn active" data-type="capex">Capital</button>
+                    <button class="type-btn" data-type="opex">Subscription</button>
+                </div>
+                <div class="help-text" style="margin-bottom: 12px;">
+                    <strong>Capital (CapEx)</strong> = one-time purchases funded over time (phone, PC).
+                    <strong>Subscription (OpEx)</strong> = recurring costs deducted from gains first (Spotify, cloud).
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Name</label>
+                    <input type="text" class="form-input" id="expenseName" placeholder="Mobile Phone">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Cost (SEK)</label>
+                    <input type="number" class="form-input" id="expenseCost" placeholder="12000">
+                </div>
+                <div class="form-group" id="intervalGroup">
+                    <label class="form-label">Interval (years)</label>
+                    <input type="number" class="form-input" id="expenseInterval" placeholder="4" min="1">
+                </div>
+                <div class="form-group" id="billingGroup" style="display: none;">
+                    <label class="form-label">Billing</label>
+                    <select class="select-input" id="billingCycle">
+                        <option value="monthly">Monthly</option>
+                        <option value="yearly">Yearly</option>
+                    </select>
+                </div>
+                <div class="form-group" id="expenseDateGroup">
+                    <label class="form-label" id="expenseDateLabel">Last Procured</label>
+                    <input type="date" class="form-input" id="expenseDate">
+                    <div class="help-text">When was this item last purchased? Funding progress counts from this date.</div>
+                </div>
+                <div class="button-row">
+                    <button class="btn btn-primary" id="saveExpense">Save</button>
+                    <button class="btn btn-secondary" id="cancelExpense">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== PROCUREMENT MODAL ===== -->
+    <div class="modal-overlay" id="procurementModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">Record Procurement</h2>
+                <button class="modal-close" id="closeProcurementModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="procurementExpenseName" style="font-weight: 500; margin-bottom: 12px;"></p>
+                <div class="help-text" style="margin-bottom: 10px;">
+                    Record an actual purchase. This deducts the cost from gains and resets the funding progress for this item.
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Date</label>
+                    <input type="date" class="form-input" id="procurementDate">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Cost (SEK)</label>
+                    <input type="number" class="form-input" id="procurementCost">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Note (optional)</label>
+                    <input type="text" class="form-input" id="procurementNote" placeholder="e.g. New Samsung Galaxy">
+                </div>
+                <div class="button-row">
+                    <button class="btn btn-primary" id="saveProcurement">Record</button>
+                    <button class="btn btn-secondary" id="cancelProcurement">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== EVENT MODAL ===== -->
+    <div class="modal-overlay" id="eventModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="eventModalTitle">Add Event</h2>
+                <button class="modal-close" id="closeEventModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="event-type-select" id="eventTypeSelect">
+                    <button class="event-type-btn active" data-type="deposit">+ Deposit</button>
+                    <button class="event-type-btn" data-type="rate_change">Rate Change</button>
+                </div>
+                <div class="help-text" style="margin-bottom: 12px;">
+                    <strong>Deposit</strong> = add money to the investment fund.
+                    <strong>Rate Change</strong> = adjust expected return from a specific date forward.
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Date</label>
+                    <input type="date" class="form-input" id="eventDate">
+                </div>
+                <div class="form-group" id="eventAmountGroup">
+                    <label class="form-label" id="eventAmountLabel">Amount</label>
+                    <input type="number" class="form-input" id="eventAmount">
+                </div>
+                <div class="form-group" id="eventRateGroup" style="display: none;">
+                    <label class="form-label">Rate (%)</label>
+                    <input type="number" class="form-input" id="eventRate" step="0.5">
+                </div>
+                <div class="button-row">
+                    <button class="btn btn-primary" id="saveEvent">Save</button>
+                    <button class="btn btn-secondary" id="cancelEvent">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
