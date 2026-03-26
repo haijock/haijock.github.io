@@ -14,6 +14,8 @@
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="vendor/chart.js"></script>
     <script src="vendor/chartjs-adapter-date-fns.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack-all.min.js"></script>
     <style>
         :root {
             --bg-primary: #0a0a0f;
@@ -42,13 +44,16 @@
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
 
-        html { scroll-behavior: smooth; }
+        html {
+            scroll-behavior: smooth;
+            overflow-y: auto;
+            background: var(--bg-primary);
+        }
 
         body {
             font-family: var(--font-sans);
             background: var(--bg-primary);
             color: var(--text-primary);
-            min-height: 100vh;
             line-height: 1.5;
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
@@ -56,7 +61,7 @@
 
         ::selection { background: rgba(0, 212, 170, 0.3); color: var(--text-primary); }
 
-        .app-container { max-width: 1100px; margin: 0 auto; padding: 20px 24px; }
+        .app-container { max-width: 100%; margin: 0 auto; padding: 20px 24px; }
 
         *:focus-visible {
             outline: 2px solid var(--accent-primary);
@@ -224,6 +229,10 @@
             border-color: var(--accent-primary);
         }
         .pane-card { margin-bottom: 16px; }
+        .grid-stack-item-content > .pane-card {
+            display: flex;
+            flex-direction: column;
+        }
         .pane-mode-toggle {
             display: flex; gap: 2px; padding: 2px;
             background: var(--bg-tertiary); border-radius: var(--radius-sm);
@@ -336,40 +345,6 @@
         }
         .milestone-tooltip strong { color: var(--text-primary); }
         .milestone-row:hover .milestone-tooltip { display: block; }
-
-        /* ========== SUSTAINABILITY GAUGE ========== */
-        .gauge-container {
-            display: flex; flex-direction: column; align-items: center;
-            justify-content: center; height: 200px; position: relative;
-        }
-        .gauge-svg { overflow: visible; }
-        .gauge-value {
-            font-size: 2.5rem; font-weight: 700; font-family: var(--font-mono);
-            fill: var(--text-primary);
-        }
-        .gauge-label {
-            font-size: 0.7rem; fill: var(--text-muted);
-            text-transform: uppercase; letter-spacing: 0.5px;
-        }
-        .gauge-trend {
-            display: flex; align-items: center; justify-content: center;
-            gap: 6px; padding: 6px 0 10px;
-            font-size: 0.75rem; font-weight: 500;
-        }
-        .gauge-trend .arrow { font-size: 1rem; line-height: 1; }
-        .gauge-trend.up { color: var(--accent-success); }
-        .gauge-trend.down { color: var(--accent-danger); }
-        .gauge-trend.flat { color: var(--text-muted); }
-        .gauge-summary {
-            display: flex; justify-content: center; gap: 24px;
-            font-size: 0.72rem; color: var(--text-secondary);
-            font-family: var(--font-mono); flex-wrap: wrap;
-        }
-        .gauge-summary-item { white-space: nowrap; }
-        .gauge-summary-label {
-            color: var(--text-muted); font-family: var(--font-sans);
-            font-size: 0.65rem; margin-right: 4px;
-        }
 
         /* Contextual help system */
         .help-card {
@@ -759,6 +734,59 @@
             .chart-tab { padding: 5px 8px; font-size: 0.7rem; }
             .expense-name { font-size: 0.85rem; }
         }
+
+        /* ========== GRIDSTACK OVERRIDES ========== */
+        .grid-stack {
+            margin-top: 16px;
+        }
+        .grid-stack-item-content {
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .grid-stack-item-content > .chart-card,
+        .grid-stack-item-content > .list-card,
+        .grid-stack-item-content > .pane-toggle-bar {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow: hidden;
+            margin-bottom: 0;
+            border-radius: 0;
+        }
+        /* Let the list body scroll within the card */
+        .grid-stack-item-content > .list-card {
+            display: flex;
+            flex-direction: column;
+        }
+        .grid-stack-item-content > .list-card > .list-body {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+        }
+        /* Chart container fills remaining space */
+        .grid-stack-item-content > .chart-card > .chart-container {
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+        .grid-stack-item-content > .chart-card {
+            display: flex;
+            flex-direction: column;
+        }
+        /* Drag handle: only card headers */
+        .grid-stack-item .chart-header,
+        .grid-stack-item .list-header {
+            cursor: grab;
+        }
+        .grid-stack-item .chart-header:active,
+        .grid-stack-item .list-header:active {
+            cursor: grabbing;
+        }
+        /* Placeholder while dragging */
+        .grid-stack-placeholder > .placeholder-content {
+            background: rgba(0, 212, 170, 0.08);
+            border: 2px dashed var(--accent-primary);
+            border-radius: var(--radius-lg);
+        }
     </style>
 </head>
 <body>
@@ -775,7 +803,7 @@
 #vsel a:hover{background:#1e1e3a;color:#fff}
 #vsel .vsel-cur{color:#6fc;font-weight:600}
 </style>
-<details id="vsel"><summary>dev/feature/sustainability-gauge</summary>
+<details id="vsel"><summary>dev/feature/resizable-grid-layout</summary>
 <div class="vsel-dd">
 <div class="vsel-hd">current</div>
 <a href="../../../">main</a>
@@ -784,7 +812,7 @@
 <a href="../../../v1.6.0/">v1.6.0</a><a href="../../../v1.5.0/">v1.5.0</a><a href="../../../v1.4.0/">v1.4.0</a><a href="../../../v1.3.1/">v1.3.1</a><a href="../../../v1.3.0/">v1.3.0</a><a href="../../../v1.2.1/">v1.2.1</a><a href="../../../v1.2.0/">v1.2.0</a><a href="../../../v1.1.0/">v1.1.0</a><a href="../../../v1.0.0/">v1.0.0</a><a href="../../../v0.1.0/">v0.1.0</a>
 <hr class="vsel-hr">
 <div class="vsel-hd">development</div>
-<a href="../../../dev/feature/annual-summary/">dev/feature/annual-summary</a><a href="../../../dev/feature/combinable-filters/">dev/feature/combinable-filters</a><a href="../../../dev/feature/expense-growth-simulator/">dev/feature/expense-growth-simulator</a><a href="../../../dev/feature/mc-debounce/">dev/feature/mc-debounce</a><a href="../../../dev/feature/resizable-grid-layout/">dev/feature/resizable-grid-layout</a><a href="../../../dev/feature/sustainability-gauge/" class="vsel-cur">dev/feature/sustainability-gauge</a><a href="../../../dev/feature/what-if-scenarios/">dev/feature/what-if-scenarios</a><a href="../../../dev/onboard/combo-wizard-states/">dev/onboard/combo-wizard-states</a><a href="../../../dev/onboard/guided-walkthrough/">dev/onboard/guided-walkthrough</a><a href="../../../dev/onboard/learn-by-doing/">dev/onboard/learn-by-doing</a><a href="../../../dev/onboard/smart-empty-states/">dev/onboard/smart-empty-states</a>
+<a href="../../../dev/feature/annual-summary/">dev/feature/annual-summary</a><a href="../../../dev/feature/combinable-filters/">dev/feature/combinable-filters</a><a href="../../../dev/feature/expense-growth-simulator/">dev/feature/expense-growth-simulator</a><a href="../../../dev/feature/mc-debounce/">dev/feature/mc-debounce</a><a href="../../../dev/feature/resizable-grid-layout/" class="vsel-cur">dev/feature/resizable-grid-layout</a><a href="../../../dev/feature/sustainability-gauge/">dev/feature/sustainability-gauge</a><a href="../../../dev/feature/what-if-scenarios/">dev/feature/what-if-scenarios</a><a href="../../../dev/onboard/combo-wizard-states/">dev/onboard/combo-wizard-states</a><a href="../../../dev/onboard/guided-walkthrough/">dev/onboard/guided-walkthrough</a><a href="../../../dev/onboard/learn-by-doing/">dev/onboard/learn-by-doing</a><a href="../../../dev/onboard/smart-empty-states/">dev/onboard/smart-empty-states</a>
 </div>
 </details>
 <!-- /version-selector -->
@@ -829,6 +857,7 @@
                     <div class="dropdown-menu" id="menuDropdown">
                         <button class="dropdown-item" id="loadExampleBtn">Load Example Data</button>
                         <button class="dropdown-item" id="toggleHelpBtn">Toggle Help</button>
+                        <button class="dropdown-item" id="resetLayoutBtn">Reset Layout</button>
                         <div class="dropdown-divider"></div>
                         <button class="dropdown-item" id="exportBtn">Export JSON</button>
                         <button class="dropdown-item" id="importBtn">Import JSON</button>
@@ -844,204 +873,232 @@
             Plan how much to invest so that returns fund your recurring purchases and subscriptions &mdash; without touching the principal.
         </div>
 
-        <!-- ===== CHART ===== -->
-        <div class="chart-card" style="position: relative;">
-            <div class="help-card" style="top: 50px; right: 12px;">
-                <strong>Projection</strong> shows your portfolio growth over time with Monte Carlo confidence bands.
-                Use the toggle buttons below to show additional views: <em>Breakdown</em> (annual cost per expense),
-                <em>Priority</em> (CapEx urgency ranking), <em>Cash Flow</em> (monthly inflows vs outflows).<br>
-                <strong>Tip:</strong> Click the chart to set a date. Drag to scrub. All visible panes update to the selected date.
-            </div>
-            <div class="chart-header">
-                <div class="chart-header-left">
-                    <span class="card-title">Portfolio Projection</span>
-                    <span id="timelineDateDisplay" style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-muted);"></span>
-                    <span id="drainingWarning" class="draining-warning" style="display: none;">
-                        &#x26A0; Draining Principal
-                    </span>
-                </div>
-            </div>
-            <div class="chart-container" id="chartContainer">
-                <canvas id="mainChart"></canvas>
-            </div>
-            <div class="chart-timeline-hint">Click chart to set date &middot; Drag to scrub &middot; Double-click to reset &middot; All numbers update to the selected date</div>
-        </div>
+        <!-- ===== GRIDSTACK LAYOUT ===== -->
+        <div class="grid-stack" id="gridStack">
 
-        <!-- ===== PANE TOGGLES ===== -->
-        <div class="pane-toggle-bar">
-            <button class="pane-toggle" data-pane="breakdown">Breakdown</button>
-            <button class="pane-toggle" data-pane="priority">Priority</button>
-            <button class="pane-toggle" data-pane="cashflow">Cash Flow</button>
-            <button class="pane-toggle" data-pane="milestones">Milestones</button>
-            <button class="pane-toggle" data-pane="sustainability">Sustainability</button>
-        </div>
-
-        <!-- ===== BREAKDOWN PANE ===== -->
-        <div class="chart-card pane-card" id="breakdownPane" style="display: none;">
-            <div class="chart-header">
-                <div class="chart-header-left">
-                    <span class="card-title">Breakdown</span>
-                </div>
-            </div>
-            <div class="chart-container" style="height: 240px;">
-                <canvas id="breakdownChart"></canvas>
-            </div>
-        </div>
-
-        <!-- ===== PRIORITY PANE ===== -->
-        <div class="chart-card pane-card" id="priorityPane" style="display: none;">
-            <div class="chart-header">
-                <div class="chart-header-left">
-                    <span class="card-title">Priority Queue</span>
-                </div>
-                <div class="pane-mode-toggle">
-                    <button class="pane-mode-btn active" data-mode="full">Full</button>
-                    <button class="pane-mode-btn" data-mode="compact">Compact</button>
-                </div>
-            </div>
-            <div id="priorityView" style="overflow-y: auto; max-height: 320px; padding: 8px 0;"></div>
-        </div>
-
-        <!-- ===== CASH FLOW PANE ===== -->
-        <div class="chart-card pane-card" id="cashflowPane" style="display: none;">
-            <div class="chart-header">
-                <div class="chart-header-left">
-                    <span class="card-title">Cash Flow</span>
-                </div>
-            </div>
-            <div id="cashflowView" style="overflow-y: auto; max-height: 400px; padding: 8px 0;"></div>
-        </div>
-
-        <!-- ===== MILESTONES PANE ===== -->
-        <div class="chart-card pane-card" id="milestonesPane" style="display: none;">
-            <div class="chart-header">
-                <div class="chart-header-left">
-                    <span class="card-title">Funding Milestones</span>
-                </div>
-                <div class="milestone-legend">
-                    <span class="milestone-legend-item"><span class="milestone-legend-dot" style="background: var(--accent-danger);"></span>Behind</span>
-                    <span class="milestone-legend-item"><span class="milestone-legend-dot" style="background: var(--accent-warning);"></span>Tight</span>
-                    <span class="milestone-legend-item"><span class="milestone-legend-dot" style="background: var(--accent-success);"></span>Ahead</span>
-                    <span class="milestone-legend-item"><span class="milestone-legend-dot" style="background: var(--accent-primary);"></span>Funded</span>
-                    <span class="milestone-legend-item"><span class="milestone-legend-diamond"></span>Due</span>
-                    <span class="milestone-legend-item"><span class="milestone-legend-circle"></span>Projected</span>
-                </div>
-            </div>
-            <div id="milestonesView" style="overflow-y: auto; max-height: 400px; padding: 8px 0;"></div>
-        </div>
-
-        <!-- ===== SUSTAINABILITY PANE ===== -->
-        <div class="chart-card pane-card" id="sustainabilityPane" style="display: none;">
-            <div class="chart-header">
-                <div class="chart-header-left">
-                    <span class="card-title">Sustainability</span>
-                </div>
-            </div>
-            <div id="sustainabilityView" style="padding: 8px 0;"></div>
-        </div>
-
-        <!-- ===== UNIFIED LIST ===== -->
-        <div class="list-card" style="position: relative;">
-            <div class="help-card" style="top: 50px; right: 12px;">
-                <strong>Events &amp; Expenses:</strong> This list shows all your expenses, deposits, rate changes, and procurements.
-                <em>CapEx</em> = one-time purchases (laptop, phone) that recur at set intervals.
-                <em>OpEx</em> = ongoing subscriptions (cloud, SaaS). <em>Deposits</em> = money added to the fund.
-                <em>Rate changes</em> = adjustments to expected return.<br>
-                <strong>Tip:</strong> Use <em>+ Expense</em> to add items and <em>+ Event</em> for deposits or rate changes.
-                The timeline bar on the chart updates all progress values to the selected date.
-            </div>
-            <div class="list-header">
-                <div class="list-header-left">
-                    <span class="list-title">Events &amp; Expenses</span>
-                    <div class="filter-tabs" id="filterTabs">
-                        <button class="filter-tab active" data-filter="all">All</button>
-                        <button class="filter-tab" data-filter="expenses">Expenses</button>
-                        <button class="filter-tab" data-filter="capex">CapEx</button>
-                        <button class="filter-tab" data-filter="opex">OpEx</button>
-                        <button class="filter-tab" data-filter="deposits">Deposits</button>
-                        <button class="filter-tab" data-filter="rates">Rates</button>
-                        <button class="filter-tab" data-filter="procurements">Procs</button>
+            <!-- ===== CHART ===== -->
+            <div class="grid-stack-item" gs-id="chart" gs-w="12" gs-h="4" gs-no-resize="false">
+                <div class="grid-stack-item-content">
+                    <div class="chart-card" style="position: relative;">
+                        <div class="help-card" style="top: 50px; right: 12px;">
+                            <strong>Projection</strong> shows your portfolio growth over time with Monte Carlo confidence bands.
+                            Use the toggle buttons below to show additional views: <em>Breakdown</em> (annual cost per expense),
+                            <em>Priority</em> (CapEx urgency ranking), <em>Cash Flow</em> (monthly inflows vs outflows).<br>
+                            <strong>Tip:</strong> Click the chart to set a date. Drag to scrub. All visible panes update to the selected date.
+                        </div>
+                        <div class="chart-header">
+                            <div class="chart-header-left">
+                                <span class="card-title">Portfolio Projection</span>
+                                <span id="timelineDateDisplay" style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-muted);"></span>
+                                <span id="drainingWarning" class="draining-warning" style="display: none;">
+                                    &#x26A0; Draining Principal
+                                </span>
+                            </div>
+                        </div>
+                        <div class="chart-container" id="chartContainer">
+                            <canvas id="mainChart"></canvas>
+                        </div>
+                        <div class="chart-timeline-hint">Click chart to set date &middot; Drag to scrub &middot; Double-click to reset &middot; All numbers update to the selected date</div>
                     </div>
                 </div>
-                <div style="display: flex; gap: 6px;">
-                    <button class="btn btn-secondary btn-sm" id="addEventBtn">+ Event</button>
-                    <button class="btn btn-primary btn-sm" id="addExpenseBtn">+ Expense</button>
-                </div>
             </div>
 
-            <!-- Pinned fund settings row -->
-            <div class="fund-settings-row" id="fundSettingsRow" style="position: relative;">
-                <div class="help-card" style="top: 100%; left: 12px; margin-top: 4px;">
-                    <strong>Settings:</strong> <em>Principal</em> is your invested lump sum.
-                    <em>Rate</em> is the expected annual return. <em>Horizon</em> sets how many years to project.
-                    Enable <em>Redistribute surplus</em> so fully-funded items' excess gains flow to underfunded ones.
-                    <em>Real (inflation-adj.)</em> discounts future values to today's purchasing power.
-                </div>
-                <div class="setting-group">
-                    <span class="setting-label">Principal</span>
-                    <input type="number" class="form-input" id="initialPrincipal" value="135000">
-                    <span id="monthlyGainHint" class="help-text-inline" style="white-space: nowrap;"></span>
-                </div>
-                <div class="setting-group">
-                    <span class="setting-label">Rate</span>
-                    <div class="range-group">
-                        <input type="range" class="range-input" id="returnRate" min="1" max="15" value="7" step="0.5" style="width:80px;">
-                        <span class="range-value" id="returnRateValue">7%</span>
+            <!-- ===== PANE TOGGLES ===== -->
+            <div class="grid-stack-item" gs-id="toggles" gs-w="12" gs-h="1" gs-no-resize="true" gs-no-move="true">
+                <div class="grid-stack-item-content">
+                    <div class="pane-toggle-bar">
+                        <button class="pane-toggle" data-pane="breakdown">Breakdown</button>
+                        <button class="pane-toggle" data-pane="priority">Priority</button>
+                        <button class="pane-toggle" data-pane="cashflow">Cash Flow</button>
+                        <button class="pane-toggle" data-pane="milestones">Milestones</button>
                     </div>
-                    <span id="rateWarning" class="help-text-inline" style="display: none; color: var(--accent-warning); white-space: nowrap;"></span>
-                </div>
-                <div class="setting-group">
-                    <span class="setting-label">Account</span>
-                    <select class="select-input" id="accountType">
-                        <option value="isk">ISK</option>
-                        <option value="traditional">Traditional</option>
-                        <option value="brokerage">Brokerage</option>
-                    </select>
-                </div>
-                <div class="setting-group">
-                    <span class="setting-label">Start</span>
-                    <input type="date" class="form-input" id="fundStartDate" style="width:140px;">
-                </div>
-                <div class="setting-group">
-                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;" title="When a CapEx item is 100% funded, its excess allocated gains flow to other unfunded items, helping them fund faster">
-                        <input type="checkbox" id="redistributeToggle" checked>
-                        <span class="setting-label" style="margin: 0;">Redistribute surplus</span>
-                    </label>
-                </div>
-                <div class="setting-group">
-                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;" title="Show chart in real (inflation-adjusted) terms. Discounts future values by the inflation rate so you see today's purchasing power.">
-                        <input type="checkbox" id="inflationToggle">
-                        <span class="setting-label" style="margin: 0;">Real (inflation-adj.)</span>
-                    </label>
-                    <input type="number" class="form-input" id="inflationRate" value="2" min="0" max="15" step="0.5" style="width: 55px; font-size: 0.75rem; padding: 3px 5px;" title="Assumed annual inflation rate (%)">
-                    <span class="help-text-inline">%</span>
-                </div>
-                <div class="setting-group">
-                    <span class="setting-label">Horizon</span>
-                    <input type="number" class="form-input" id="projectionYears" value="20" min="1" max="50" step="1" style="width: 55px; font-size: 0.75rem; padding: 3px 5px;" title="Projection horizon in years (how far into the future to project)">
-                    <span class="help-text-inline">yr</span>
-                </div>
-                <div class="setting-group">
-                    <span class="setting-label">List delay</span>
-                    <input type="number" class="form-input" id="listDebounceMs" value="300" min="0" max="2000" step="50" style="width: 55px; font-size: 0.75rem; padding: 3px 5px;" title="Debounce delay (ms) before the list updates while scrubbing the timeline. 0 = instant (may flicker with many items).">
-                    <span class="help-text-inline">ms</span>
-                </div>
-            </div>
-            <div style="padding: 4px 16px 8px; background: var(--bg-secondary); border-bottom: 1px solid var(--border);">
-                <div class="help-text">
-                    <strong>Principal</strong> = lump sum invested. <strong>Rate</strong> = expected annual return.
-                    <strong>Required</strong> = minimum principal needed so annual gains cover all expenses.
-                    <strong>Redistribute</strong> = when a CapEx is fully funded, its surplus gains flow to unfunded items.
-                    <strong>Horizon</strong> = how many years into the future to project.
-                    <strong>List delay</strong> = ms to wait before updating the list while scrubbing the timeline (0 = instant).
                 </div>
             </div>
 
-            <div class="list-body" id="unifiedList">
-                <div class="empty-state">No events or expenses yet</div>
+            <!-- ===== UNIFIED LIST ===== -->
+            <div class="grid-stack-item" gs-id="events" gs-w="12" gs-h="6">
+                <div class="grid-stack-item-content">
+                    <div class="list-card" style="position: relative;">
+                        <div class="help-card" style="top: 50px; right: 12px;">
+                            <strong>Events &amp; Expenses:</strong> This list shows all your expenses, deposits, rate changes, and procurements.
+                            <em>CapEx</em> = one-time purchases (laptop, phone) that recur at set intervals.
+                            <em>OpEx</em> = ongoing subscriptions (cloud, SaaS). <em>Deposits</em> = money added to the fund.
+                            <em>Rate changes</em> = adjustments to expected return.<br>
+                            <strong>Tip:</strong> Use <em>+ Expense</em> to add items and <em>+ Event</em> for deposits or rate changes.
+                            The timeline bar on the chart updates all progress values to the selected date.
+                        </div>
+                        <div class="list-header">
+                            <div class="list-header-left">
+                                <span class="list-title">Events &amp; Expenses</span>
+                                <div class="filter-tabs" id="filterTabs">
+                                    <button class="filter-tab active" data-filter="all">All</button>
+                                    <button class="filter-tab" data-filter="expenses">Expenses</button>
+                                    <button class="filter-tab" data-filter="capex">CapEx</button>
+                                    <button class="filter-tab" data-filter="opex">OpEx</button>
+                                    <button class="filter-tab" data-filter="deposits">Deposits</button>
+                                    <button class="filter-tab" data-filter="rates">Rates</button>
+                                    <button class="filter-tab" data-filter="procurements">Procs</button>
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 6px;">
+                                <button class="btn btn-secondary btn-sm" id="addEventBtn">+ Event</button>
+                                <button class="btn btn-primary btn-sm" id="addExpenseBtn">+ Expense</button>
+                            </div>
+                        </div>
+
+                        <!-- Pinned fund settings row -->
+                        <div class="fund-settings-row" id="fundSettingsRow" style="position: relative;">
+                            <div class="help-card" style="top: 100%; left: 12px; margin-top: 4px;">
+                                <strong>Settings:</strong> <em>Principal</em> is your invested lump sum.
+                                <em>Rate</em> is the expected annual return. <em>Horizon</em> sets how many years to project.
+                                Enable <em>Redistribute surplus</em> so fully-funded items' excess gains flow to underfunded ones.
+                                <em>Real (inflation-adj.)</em> discounts future values to today's purchasing power.
+                            </div>
+                            <div class="setting-group">
+                                <span class="setting-label">Principal</span>
+                                <input type="number" class="form-input" id="initialPrincipal" value="135000">
+                                <span id="monthlyGainHint" class="help-text-inline" style="white-space: nowrap;"></span>
+                            </div>
+                            <div class="setting-group">
+                                <span class="setting-label">Rate</span>
+                                <div class="range-group">
+                                    <input type="range" class="range-input" id="returnRate" min="1" max="15" value="7" step="0.5" style="width:80px;">
+                                    <span class="range-value" id="returnRateValue">7%</span>
+                                </div>
+                                <span id="rateWarning" class="help-text-inline" style="display: none; color: var(--accent-warning); white-space: nowrap;"></span>
+                            </div>
+                            <div class="setting-group">
+                                <span class="setting-label">Account</span>
+                                <select class="select-input" id="accountType">
+                                    <option value="isk">ISK</option>
+                                    <option value="traditional">Traditional</option>
+                                    <option value="brokerage">Brokerage</option>
+                                </select>
+                            </div>
+                            <div class="setting-group">
+                                <span class="setting-label">Start</span>
+                                <input type="date" class="form-input" id="fundStartDate" style="width:140px;">
+                            </div>
+                            <div class="setting-group">
+                                <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;" title="When a CapEx item is 100% funded, its excess allocated gains flow to other unfunded items, helping them fund faster">
+                                    <input type="checkbox" id="redistributeToggle" checked>
+                                    <span class="setting-label" style="margin: 0;">Redistribute surplus</span>
+                                </label>
+                            </div>
+                            <div class="setting-group">
+                                <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;" title="Show chart in real (inflation-adjusted) terms. Discounts future values by the inflation rate so you see today's purchasing power.">
+                                    <input type="checkbox" id="inflationToggle">
+                                    <span class="setting-label" style="margin: 0;">Real (inflation-adj.)</span>
+                                </label>
+                                <input type="number" class="form-input" id="inflationRate" value="2" min="0" max="15" step="0.5" style="width: 55px; font-size: 0.75rem; padding: 3px 5px;" title="Assumed annual inflation rate (%)">
+                                <span class="help-text-inline">%</span>
+                            </div>
+                            <div class="setting-group">
+                                <span class="setting-label">Horizon</span>
+                                <input type="number" class="form-input" id="projectionYears" value="20" min="1" max="50" step="1" style="width: 55px; font-size: 0.75rem; padding: 3px 5px;" title="Projection horizon in years (how far into the future to project)">
+                                <span class="help-text-inline">yr</span>
+                            </div>
+                            <div class="setting-group">
+                                <span class="setting-label">List delay</span>
+                                <input type="number" class="form-input" id="listDebounceMs" value="300" min="0" max="2000" step="50" style="width: 55px; font-size: 0.75rem; padding: 3px 5px;" title="Debounce delay (ms) before the list updates while scrubbing the timeline. 0 = instant (may flicker with many items).">
+                                <span class="help-text-inline">ms</span>
+                            </div>
+                        </div>
+                        <div style="padding: 4px 16px 8px; background: var(--bg-secondary); border-bottom: 1px solid var(--border);">
+                            <div class="help-text">
+                                <strong>Principal</strong> = lump sum invested. <strong>Rate</strong> = expected annual return.
+                                <strong>Required</strong> = minimum principal needed so annual gains cover all expenses.
+                                <strong>Redistribute</strong> = when a CapEx is fully funded, its surplus gains flow to unfunded items.
+                                <strong>Horizon</strong> = how many years into the future to project.
+                                <strong>List delay</strong> = ms to wait before updating the list while scrubbing the timeline (0 = instant).
+                            </div>
+                        </div>
+
+                        <div class="list-body" id="unifiedList">
+                            <div class="empty-state">No events or expenses yet</div>
+                        </div>
+                    </div>
+                </div>
             </div>
-        </div>
-    </div>
+
+        </div><!-- /grid-stack -->
+
+        <!-- Hidden pane templates (added to grid dynamically when toggled on) -->
+        <template id="tpl-breakdown">
+            <div class="grid-stack-item" gs-id="breakdown" gs-w="6" gs-h="4">
+                <div class="grid-stack-item-content">
+                    <div class="chart-card pane-card" id="breakdownPane">
+                        <div class="chart-header">
+                            <div class="chart-header-left">
+                                <span class="card-title">Breakdown</span>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="breakdownChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+
+        <template id="tpl-priority">
+            <div class="grid-stack-item" gs-id="priority" gs-w="6" gs-h="4">
+                <div class="grid-stack-item-content">
+                    <div class="chart-card pane-card" id="priorityPane">
+                        <div class="chart-header">
+                            <div class="chart-header-left">
+                                <span class="card-title">Priority Queue</span>
+                            </div>
+                            <div class="pane-mode-toggle">
+                                <button class="pane-mode-btn active" data-mode="full">Full</button>
+                                <button class="pane-mode-btn" data-mode="compact">Compact</button>
+                            </div>
+                        </div>
+                        <div id="priorityView" style="overflow-y: auto; flex: 1 1 auto; min-height: 0; padding: 8px 0;"></div>
+                    </div>
+                </div>
+            </div>
+        </template>
+
+        <template id="tpl-cashflow">
+            <div class="grid-stack-item" gs-id="cashflow" gs-w="6" gs-h="4">
+                <div class="grid-stack-item-content">
+                    <div class="chart-card pane-card" id="cashflowPane">
+                        <div class="chart-header">
+                            <div class="chart-header-left">
+                                <span class="card-title">Cash Flow</span>
+                            </div>
+                        </div>
+                        <div id="cashflowView" style="overflow-y: auto; flex: 1 1 auto; min-height: 0; padding: 8px 0;"></div>
+                    </div>
+                </div>
+            </div>
+        </template>
+
+        <template id="tpl-milestones">
+            <div class="grid-stack-item" gs-id="milestones" gs-w="6" gs-h="4">
+                <div class="grid-stack-item-content">
+                    <div class="chart-card pane-card" id="milestonesPane">
+                        <div class="chart-header">
+                            <div class="chart-header-left">
+                                <span class="card-title">Funding Milestones</span>
+                            </div>
+                            <div class="milestone-legend">
+                                <span class="milestone-legend-item"><span class="milestone-legend-dot" style="background: var(--accent-danger);"></span>Behind</span>
+                                <span class="milestone-legend-item"><span class="milestone-legend-dot" style="background: var(--accent-warning);"></span>Tight</span>
+                                <span class="milestone-legend-item"><span class="milestone-legend-dot" style="background: var(--accent-success);"></span>Ahead</span>
+                                <span class="milestone-legend-item"><span class="milestone-legend-dot" style="background: var(--accent-primary);"></span>Funded</span>
+                                <span class="milestone-legend-item"><span class="milestone-legend-diamond"></span>Due</span>
+                                <span class="milestone-legend-item"><span class="milestone-legend-circle"></span>Projected</span>
+                            </div>
+                        </div>
+                        <div id="milestonesView" style="overflow-y: auto; flex: 1 1 auto; min-height: 0; padding: 8px 0;"></div>
+                    </div>
+                </div>
+            </div>
+        </template>
+
+    </div><!-- /app-container -->
 
     <!-- ===== EXPENSE MODAL ===== -->
     <div class="modal-overlay" id="expenseModal">
