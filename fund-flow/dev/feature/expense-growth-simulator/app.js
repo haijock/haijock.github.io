@@ -275,7 +275,9 @@ const FundFlow = {
 
     chart: null,
     breakdownChart: null,
-    visiblePanes: { breakdown: false, priority: false, cashflow: false, milestones: false },
+    costGrowthChart: null,
+    visiblePanes: { breakdown: false, priority: false, cashflow: false, milestones: false, costgrowth: false },
+    costGrowthState: { globalRate: 0, perExpenseRates: {} },
     priorityMode: 'full', // 'full' or 'compact'
     timelineDate: new Date(),
     editingEventId: null,
@@ -619,6 +621,7 @@ const FundFlow = {
         if (this.visiblePanes.priority) this._renderPriorityPane();
         if (this.visiblePanes.cashflow) this._renderCashFlowPane();
         if (this.visiblePanes.milestones) this._renderMilestonesPane();
+        if (this.visiblePanes.costgrowth) this._refreshCostGrowthExpenseTable();
     },
 
     resetToToday() {
@@ -1994,7 +1997,7 @@ const FundFlow = {
         });
 
         // Show/hide pane card
-        const paneIds = { breakdown: 'breakdownPane', priority: 'priorityPane', cashflow: 'cashflowPane', milestones: 'milestonesPane' };
+        const paneIds = { breakdown: 'breakdownPane', priority: 'priorityPane', cashflow: 'cashflowPane', milestones: 'milestonesPane', costgrowth: 'costgrowthPane' };
         const card = document.getElementById(paneIds[pane]);
         if (card) card.style.display = this.visiblePanes[pane] ? '' : 'none';
 
@@ -2004,11 +2007,16 @@ const FundFlow = {
             else if (pane === 'priority') this._renderPriorityPane();
             else if (pane === 'cashflow') this._renderCashFlowPane();
             else if (pane === 'milestones') this._renderMilestonesPane();
+            else if (pane === 'costgrowth') this._renderCostGrowthPane();
         } else {
             // Destroy breakdown chart when hiding to free resources
             if (pane === 'breakdown' && this.breakdownChart) {
                 this.breakdownChart.destroy();
                 this.breakdownChart = null;
+            }
+            if (pane === 'costgrowth' && this.costGrowthChart) {
+                this.costGrowthChart.destroy();
+                this.costGrowthChart = null;
             }
         }
     },
@@ -3195,6 +3203,327 @@ const FundFlow = {
         this.render();
         this.updateChart();
         this.showToast('Example data loaded — explore the app!', 'success');
+    },
+
+    // ========== COST GROWTH SIMULATOR PANE ==========
+
+    _renderCostGrowthPane() {
+        const tableContainer = document.getElementById('costgrowthExpenseTable');
+        if (!tableContainer) return;
+
+        // Bind controls if not already bound
+        if (!this._costGrowthBound) {
+            this._costGrowthBound = true;
+
+            const slider = document.getElementById('costgrowthGlobalSlider');
+            const valueLabel = document.getElementById('costgrowthGlobalValue');
+
+            slider.addEventListener('input', () => {
+                const rate = parseFloat(slider.value);
+                this.costGrowthState.globalRate = rate / 100;
+                valueLabel.textContent = rate + ' %';
+                // Update preset button active state
+                document.querySelectorAll('.costgrowth-preset-btn').forEach(btn => {
+                    btn.classList.toggle('active', parseFloat(btn.dataset.rate) === rate);
+                });
+                this._refreshCostGrowthExpenseTable();
+                this._updateCostGrowthChart();
+            });
+
+            document.querySelectorAll('.costgrowth-preset-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const rate = parseFloat(btn.dataset.rate);
+                    slider.value = rate;
+                    this.costGrowthState.globalRate = rate / 100;
+                    valueLabel.textContent = rate + ' %';
+                    document.querySelectorAll('.costgrowth-preset-btn').forEach(b => {
+                        b.classList.toggle('active', parseFloat(b.dataset.rate) === rate);
+                    });
+                    this._refreshCostGrowthExpenseTable();
+                    this._updateCostGrowthChart();
+                });
+            });
+        }
+
+        // Sync slider with current state
+        const slider = document.getElementById('costgrowthGlobalSlider');
+        const valueLabel = document.getElementById('costgrowthGlobalValue');
+        const currentRate = this.costGrowthState.globalRate * 100;
+        slider.value = currentRate;
+        valueLabel.textContent = currentRate + ' %';
+
+        this._refreshCostGrowthExpenseTable();
+        this._updateCostGrowthChart();
+    },
+
+    _refreshCostGrowthExpenseTable() {
+        const tableContainer = document.getElementById('costgrowthExpenseTable');
+        if (!tableContainer) return;
+
+        const proj = this.project(this.timelineDate);
+        const expenses = proj.expenses;
+
+        if (expenses.length === 0) {
+            tableContainer.innerHTML = '<div class="empty-state" style="padding: 12px; font-size: 0.72rem; color: var(--text-muted);">Add expenses to see growth projections</div>';
+            return;
+        }
+
+        const globalRate = this.costGrowthState.globalRate;
+        const fmt = (n) => this.formatNumber(n);
+
+        let html = '<table><thead><tr>';
+        html += '<th>Expense</th><th>Annual cost</th><th>Override %</th><th>Year 5</th><th>Year 10</th>';
+        html += '</tr></thead><tbody>';
+
+        for (const exp of expenses) {
+            const overrideKey = exp.id;
+            const override = this.costGrowthState.perExpenseRates[overrideKey];
+            const effectiveRate = override !== undefined ? override : globalRate;
+            const annualCost = exp.annualCost;
+            const cost5 = annualCost * Math.pow(1 + effectiveRate, 5);
+            const cost10 = annualCost * Math.pow(1 + effectiveRate, 10);
+            const overrideVal = override !== undefined ? (override * 100).toString() : '';
+
+            html += '<tr>';
+            html += '<td>' + this.escapeHtml(exp.name) + '</td>';
+            html += '<td class="mono">' + fmt(annualCost) + '</td>';
+            html += '<td><input type="text" class="costgrowth-override-input" data-expense-id="' + exp.id + '" value="' + overrideVal + '" placeholder="' + (globalRate * 100) + '"></td>';
+            html += '<td class="mono">' + fmt(cost5) + '</td>';
+            html += '<td class="mono">' + fmt(cost10) + '</td>';
+            html += '</tr>';
+        }
+
+        html += '</tbody></table>';
+        tableContainer.innerHTML = html;
+
+        // Bind override inputs
+        tableContainer.querySelectorAll('.costgrowth-override-input').forEach(input => {
+            input.addEventListener('change', () => {
+                const expId = input.dataset.expenseId;
+                const val = input.value.trim();
+                if (val === '') {
+                    delete this.costGrowthState.perExpenseRates[expId];
+                } else {
+                    const parsed = parseFloat(val);
+                    if (!isNaN(parsed)) {
+                        this.costGrowthState.perExpenseRates[expId] = parsed / 100;
+                    }
+                }
+                this._refreshCostGrowthExpenseTable();
+                this._updateCostGrowthChart();
+            });
+        });
+    },
+
+    _updateCostGrowthChart() {
+        const canvas = document.getElementById('costgrowthChart');
+        if (!canvas) return;
+
+        const projYears = this.data.settings.projectionYears || 20;
+        const start = new Date(this.data.settings.fundStartDate);
+        const totalMonths = projYears * 12;
+        const globalRate = this.costGrowthState.globalRate;
+
+        // Generate static-cost projection (current behaviour, no growth)
+        const staticData = this.calculateProjection(projYears);
+
+        // Generate growing-cost projection
+        // We temporarily inflate expense costs, generate projection, then restore
+        const originalCosts = this.data.expenses.map(exp => exp.cost);
+        const growingData = [];
+
+        // For the growing-cost line, we iterate quarterly like calculateProjection
+        for (let i = 0; i <= totalMonths; i += 3) {
+            const date = new Date(start.getTime() + (i * 30.44 * 24 * 60 * 60 * 1000));
+            const yearsElapsed = i / 12;
+
+            // Temporarily inflate each expense's cost based on growth rate
+            for (let j = 0; j < this.data.expenses.length; j++) {
+                const exp = this.data.expenses[j];
+                const override = this.costGrowthState.perExpenseRates[exp.id];
+                const rate = override !== undefined ? override : globalRate;
+                this.data.expenses[j].cost = originalCosts[j] * Math.pow(1 + rate, yearsElapsed);
+            }
+
+            const proj = this.project(date);
+
+            growingData.push({
+                date: date.toISOString().split('T')[0],
+                balance: proj.principalReturnBalance
+            });
+        }
+
+        // Restore original costs
+        for (let j = 0; j < this.data.expenses.length; j++) {
+            this.data.expenses[j].cost = originalCosts[j];
+        }
+
+        // Apply inflation discounting if enabled (only for growingData — staticData
+        // comes from calculateProjection() which already discounts when showReal is on)
+        const showReal = this.data.settings.showRealValues;
+        const inflRate = this.data.settings.inflationRate || 0.02;
+
+        const staticBalances = staticData.map(p => ({
+            x: p.date,
+            y: p.balance
+        }));
+        const growingBalances = growingData.map((p, idx) => {
+            let balance = p.balance;
+            if (showReal) {
+                const yrs = (idx * 3) / 12;
+                balance = balance / Math.pow(1 + inflRate, yrs);
+            }
+            return { x: p.date, y: balance };
+        });
+
+        // Find crossover point (first quarter where growing dips below 0 while static doesn't)
+        let crossoverYear = null;
+        let staticDepletes = false;
+        for (let i = 0; i < growingBalances.length; i++) {
+            if (staticBalances[i] && staticBalances[i].y < 0) {
+                staticDepletes = true;
+            }
+            if (growingBalances[i].y < 0 && staticBalances[i] && staticBalances[i].y >= 0) {
+                crossoverYear = Math.round((i * 3) / 12);
+                break;
+            }
+        }
+
+        // Also check if growing costs deplete before horizon
+        let growingDepletes = false;
+        let growingDepleteYear = null;
+        for (let i = 0; i < growingBalances.length; i++) {
+            if (growingBalances[i].y < 0) {
+                growingDepletes = true;
+                growingDepleteYear = Math.round((i * 3) / 12);
+                break;
+            }
+        }
+
+        // Update summary text
+        const summaryEl = document.getElementById('costgrowthSummary');
+        if (summaryEl) {
+            if (globalRate === 0 && Object.keys(this.costGrowthState.perExpenseRates).length === 0) {
+                summaryEl.textContent = 'Set a growth rate to see the impact of rising costs on fund sustainability.';
+                summaryEl.className = 'costgrowth-summary';
+            } else if (crossoverYear !== null) {
+                summaryEl.textContent = 'With cost growth, the fund becomes unsustainable in year ' + crossoverYear +
+                    ' (vs. ' + (staticDepletes ? 'also unsustainable' : 'never') + ' with static costs).';
+                summaryEl.className = 'costgrowth-summary unsustainable';
+            } else if (growingDepletes) {
+                summaryEl.textContent = 'With cost growth, the fund depletes in year ' + growingDepleteYear +
+                    '. Static costs also lead to depletion.';
+                summaryEl.className = 'costgrowth-summary unsustainable';
+            } else {
+                summaryEl.textContent = 'Fund remains sustainable through the ' + projYears +
+                    '-year projection horizon even with cost growth.';
+                summaryEl.className = 'costgrowth-summary sustainable';
+            }
+        }
+
+        // Build / update chart
+        const chartConfig = {
+            type: 'line',
+            data: {
+                datasets: [
+                    {
+                        label: 'Static Costs',
+                        data: staticBalances,
+                        borderColor: '#00d4aa',
+                        backgroundColor: 'rgba(0, 212, 170, 0.08)',
+                        fill: false,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        pointHoverRadius: 4,
+                        borderWidth: 2,
+                        order: 2
+                    },
+                    {
+                        label: 'Growing Costs',
+                        data: growingBalances,
+                        borderColor: '#ef4444',
+                        backgroundColor: 'rgba(239, 68, 68, 0.06)',
+                        fill: false,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        pointHoverRadius: 4,
+                        borderWidth: 2,
+                        borderDash: [6, 3],
+                        order: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { intersect: false, mode: 'index' },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        align: 'end',
+                        labels: {
+                            color: '#a1a1aa',
+                            font: { family: "'DM Sans', sans-serif", size: 11 },
+                            boxWidth: 20, boxHeight: 2, padding: 12,
+                            usePointStyle: false
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: '#1a1a24',
+                        titleColor: '#f4f4f5',
+                        bodyColor: '#a1a1aa',
+                        borderColor: '#27272a',
+                        borderWidth: 1,
+                        padding: 12,
+                        cornerRadius: 8,
+                        titleFont: { family: "'DM Sans', sans-serif", size: 12, weight: '600' },
+                        bodyFont: { family: "'JetBrains Mono', monospace", size: 11 },
+                        displayColors: true,
+                        callbacks: {
+                            label: (ctx) => {
+                                const val = typeof ctx.raw === 'object' ? ctx.raw.y : ctx.raw;
+                                return ctx.dataset.label + ': ' + this.formatNumber(val) + ' SEK';
+                            }
+                        }
+                    },
+                    // Zero line annotation
+                    zeroLine: { enabled: true }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: { unit: 'year', displayFormats: { year: 'yyyy' } },
+                        grid: { color: 'rgba(39, 39, 42, 0.5)', drawBorder: false },
+                        ticks: { color: '#71717a', font: { size: 11, family: "'JetBrains Mono', monospace" } }
+                    },
+                    y: {
+                        grid: { color: 'rgba(39, 39, 42, 0.5)', drawBorder: false },
+                        ticks: {
+                            color: '#71717a',
+                            callback: (v) => this.formatNumber(v),
+                            font: { size: 11, family: "'JetBrains Mono', monospace" }
+                        }
+                    }
+                }
+            }
+        };
+
+        if (this.costGrowthChart) {
+            this.costGrowthChart.destroy();
+        }
+        const ctx = canvas.getContext('2d');
+        this.costGrowthChart = new Chart(ctx, chartConfig);
+    },
+
+    _saveCostGrowthRates() {
+        if (!this.data.settings.costGrowth) {
+            this.data.settings.costGrowth = {};
+        }
+        this.data.settings.costGrowth.globalRate = this.costGrowthState.globalRate;
+        this.data.settings.costGrowth.perExpenseRates = { ...this.costGrowthState.perExpenseRates };
+        this.saveToStorage();
+        this.showToast('Growth rates saved. Note: the main projection does not yet apply cost growth — this is planned for a future update.');
     },
 
     // ========== CONTEXTUAL HELP ==========

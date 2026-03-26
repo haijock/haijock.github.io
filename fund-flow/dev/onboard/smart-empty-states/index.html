@@ -725,6 +725,97 @@
             .chart-tab { padding: 5px 8px; font-size: 0.7rem; }
             .expense-name { font-size: 0.85rem; }
         }
+
+        /* ========== SMART EMPTY STATES ========== */
+        .empty-state-rich {
+            padding: 32px 20px;
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 0.82rem;
+            line-height: 1.6;
+        }
+        .empty-state-rich p {
+            margin: 0 0 14px;
+        }
+        .empty-state-minicards {
+            display: flex;
+            gap: 10px;
+            margin: 12px 0 16px;
+            justify-content: center;
+        }
+        @media (max-width: 480px) {
+            .empty-state-minicards { flex-direction: column; }
+        }
+        .empty-state-minicard {
+            flex: 1;
+            max-width: 220px;
+            padding: 12px 14px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            text-align: left;
+            font-size: 0.75rem;
+            line-height: 1.5;
+        }
+        .empty-state-minicard .minicard-icon {
+            font-size: 1rem;
+            margin-bottom: 4px;
+        }
+        .empty-state-minicard .minicard-title {
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 2px;
+            font-size: 0.78rem;
+        }
+        .empty-state-minicard .minicard-desc {
+            color: var(--text-muted);
+        }
+        .empty-state-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 14px;
+        }
+        .chart-empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            min-height: 200px;
+            padding: 32px 20px;
+            text-align: center;
+            color: var(--text-muted);
+        }
+        .chart-empty-state .chart-empty-icon {
+            font-size: 2.5rem;
+            margin-bottom: 12px;
+            opacity: 0.5;
+        }
+        .chart-empty-state p {
+            font-size: 0.82rem;
+            line-height: 1.6;
+            max-width: 380px;
+            margin: 0 0 16px;
+            color: var(--text-secondary);
+        }
+        .start-here-badge {
+            position: absolute;
+            top: -8px;
+            left: 8px;
+            background: var(--accent-primary);
+            color: var(--bg-card);
+            font-size: 0.6rem;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 10px;
+            letter-spacing: 0.3px;
+            text-transform: uppercase;
+            animation: pulse 2s ease-in-out infinite;
+            z-index: 5;
+            pointer-events: none;
+        }
     </style>
 </head>
 <body>
@@ -741,16 +832,16 @@
 #vsel a:hover{background:#1e1e3a;color:#fff}
 #vsel .vsel-cur{color:#6fc;font-weight:600}
 </style>
-<details id="vsel"><summary>main</summary>
+<details id="vsel"><summary>dev/onboard/smart-empty-states</summary>
 <div class="vsel-dd">
 <div class="vsel-hd">current</div>
-<a href="./" class="vsel-cur">main</a>
+<a href="../../../">main</a>
 <hr class="vsel-hr">
 <div class="vsel-hd">releases</div>
-<a href="v1.6.0/">v1.6.0</a><a href="v1.5.0/">v1.5.0</a><a href="v1.4.0/">v1.4.0</a><a href="v1.3.1/">v1.3.1</a><a href="v1.3.0/">v1.3.0</a><a href="v1.2.1/">v1.2.1</a><a href="v1.2.0/">v1.2.0</a><a href="v1.1.0/">v1.1.0</a><a href="v1.0.0/">v1.0.0</a><a href="v0.1.0/">v0.1.0</a>
+<a href="../../../v1.6.0/">v1.6.0</a><a href="../../../v1.5.0/">v1.5.0</a><a href="../../../v1.4.0/">v1.4.0</a><a href="../../../v1.3.1/">v1.3.1</a><a href="../../../v1.3.0/">v1.3.0</a><a href="../../../v1.2.1/">v1.2.1</a><a href="../../../v1.2.0/">v1.2.0</a><a href="../../../v1.1.0/">v1.1.0</a><a href="../../../v1.0.0/">v1.0.0</a><a href="../../../v0.1.0/">v0.1.0</a>
 <hr class="vsel-hr">
 <div class="vsel-hd">development</div>
-<a href="dev/feature/annual-summary/">dev/feature/annual-summary</a><a href="dev/feature/combinable-filters/">dev/feature/combinable-filters</a><a href="dev/feature/expense-growth-simulator/">dev/feature/expense-growth-simulator</a><a href="dev/feature/mc-debounce/">dev/feature/mc-debounce</a><a href="dev/feature/sustainability-gauge/">dev/feature/sustainability-gauge</a><a href="dev/feature/what-if-scenarios/">dev/feature/what-if-scenarios</a><a href="dev/onboard/combo-wizard-states/">dev/onboard/combo-wizard-states</a><a href="dev/onboard/guided-walkthrough/">dev/onboard/guided-walkthrough</a><a href="dev/onboard/learn-by-doing/">dev/onboard/learn-by-doing</a><a href="dev/onboard/smart-empty-states/">dev/onboard/smart-empty-states</a>
+<a href="../../../dev/feature/annual-summary/">dev/feature/annual-summary</a><a href="../../../dev/feature/combinable-filters/">dev/feature/combinable-filters</a><a href="../../../dev/feature/expense-growth-simulator/">dev/feature/expense-growth-simulator</a><a href="../../../dev/feature/mc-debounce/">dev/feature/mc-debounce</a><a href="../../../dev/feature/sustainability-gauge/">dev/feature/sustainability-gauge</a><a href="../../../dev/feature/what-if-scenarios/">dev/feature/what-if-scenarios</a><a href="../../../dev/onboard/combo-wizard-states/">dev/onboard/combo-wizard-states</a><a href="../../../dev/onboard/guided-walkthrough/">dev/onboard/guided-walkthrough</a><a href="../../../dev/onboard/learn-by-doing/">dev/onboard/learn-by-doing</a><a href="../../../dev/onboard/smart-empty-states/" class="vsel-cur">dev/onboard/smart-empty-states</a>
 </div>
 </details>
 <!-- /version-selector -->
@@ -829,6 +920,14 @@
             </div>
             <div class="chart-container" id="chartContainer">
                 <canvas id="mainChart"></canvas>
+                <div id="chartEmptyState" class="chart-empty-state" style="display: none;">
+                    <div class="chart-empty-icon">&#x1F4C8;</div>
+                    <p>Your projection will appear here. Add an expense to see how your investment grows to cover it.</p>
+                    <div class="empty-state-actions">
+                        <button class="btn btn-primary btn-sm" onclick="FundFlow.openExpenseModal()">Add your first expense</button>
+                        <button class="btn btn-secondary btn-sm" onclick="FundFlow.loadExampleData()">Load example data</button>
+                    </div>
+                </div>
             </div>
             <div class="chart-timeline-hint">Click chart to set date &middot; Drag to scrub &middot; Double-click to reset &middot; All numbers update to the selected date</div>
         </div>

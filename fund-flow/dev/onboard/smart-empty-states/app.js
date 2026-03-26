@@ -311,6 +311,26 @@ const FundFlow = {
                 });
             });
         });
+
+        // Smart empty states: auto-enable help cards and start-here badge on first visit
+        if (this.isFirstVisit()) {
+            document.body.classList.add('help-visible');
+            // Add "Start here" badge to the principal settings group
+            const settingsRow = document.getElementById('fundSettingsRow');
+            if (settingsRow && !settingsRow.querySelector('.start-here-badge')) {
+                const badge = document.createElement('span');
+                badge.className = 'start-here-badge';
+                badge.textContent = 'Start here';
+                settingsRow.style.position = 'relative';
+                settingsRow.prepend(badge);
+            }
+            // Remove badge on any interaction with settings
+            const settingsInputs = settingsRow ? settingsRow.querySelectorAll('input, select') : [];
+            settingsInputs.forEach(input => {
+                input.addEventListener('input', () => this._removeStartHereBadge(), { once: true });
+                input.addEventListener('change', () => this._removeStartHereBadge(), { once: true });
+            });
+        }
     },
 
     loadFromStorage() {
@@ -1393,8 +1413,12 @@ const FundFlow = {
         this.updateFilterCounts(items);
 
         if (filtered.length === 0) {
-            const msg = filter === 'all' ? 'No events or expenses yet' : 'No items match this filter';
-            container.innerHTML = '<div class="empty-state">' + msg + '</div>';
+            if (filter === 'all' && !this._hasRealData()) {
+                container.innerHTML = this._renderRichEmptyList();
+            } else {
+                const msg = filter === 'all' ? 'No events or expenses yet' : 'No items match this filter';
+                container.innerHTML = '<div class="empty-state">' + msg + '</div>';
+            }
             return;
         }
 
@@ -2627,6 +2651,15 @@ const FundFlow = {
         this.render();
         this.updateChart();
         this.showToast(this.editingExpenseId ? 'Expense updated' : 'Expense added');
+
+        // Milestone nudge: first expense
+        if (!this.editingExpenseId && this.data.expenses.length === 1) {
+            setTimeout(() => this._showNudge('first_expense', 'Your first expense is in! Check the chart to see it projected.'), 800);
+        }
+        // Milestone nudge: has both expenses and events
+        if (this.data.expenses.length > 0 && this.data.events.filter(ev => !ev.isInitial).length > 0) {
+            setTimeout(() => this._showNudge('fund_taking_shape', 'Looking good \u2014 your fund is taking shape.'), 1200);
+        }
     },
 
     openProcurementModal(expenseId) {
@@ -2952,6 +2985,18 @@ const FundFlow = {
         this.render();
         this.updateChart();
         this.showToast(this.editingEventId ? 'Event updated' : 'Event added');
+
+        // Milestone nudge: first deposit
+        if (!this.editingEventId && type === 'deposit') {
+            const deposits = this.data.events.filter(ev => ev.type === 'deposit' && !ev.isInitial);
+            if (deposits.length === 1) {
+                setTimeout(() => this._showNudge('first_deposit', 'Deposit recorded. Your principal and gains are now tracking.'), 800);
+            }
+        }
+        // Milestone nudge: has both expenses and events
+        if (this.data.expenses.length > 0 && this.data.events.filter(ev => !ev.isInitial).length > 0) {
+            setTimeout(() => this._showNudge('fund_taking_shape', 'Looking good \u2014 your fund is taking shape.'), 1200);
+        }
     },
 
     editEvent(id) {
@@ -3203,6 +3248,86 @@ const FundFlow = {
         document.body.classList.toggle('help-visible');
         const isVisible = document.body.classList.contains('help-visible');
         this.showToast(isVisible ? 'Help cards visible — click Toggle Help again to hide' : 'Help cards hidden', 'success');
+    },
+
+    // ========== SMART EMPTY STATES ==========
+
+    isFirstVisit() {
+        return !localStorage.getItem('fundflow_onboard_seen');
+    },
+
+    markOnboardSeen() {
+        localStorage.setItem('fundflow_onboard_seen', '1');
+    },
+
+    _nudgeShown(key) {
+        try {
+            const shown = JSON.parse(localStorage.getItem('fundflow_nudges_shown') || '[]');
+            return shown.includes(key);
+        } catch { return false; }
+    },
+
+    _markNudgeShown(key) {
+        try {
+            const shown = JSON.parse(localStorage.getItem('fundflow_nudges_shown') || '[]');
+            if (!shown.includes(key)) {
+                shown.push(key);
+                localStorage.setItem('fundflow_nudges_shown', JSON.stringify(shown));
+            }
+        } catch { /* ignore */ }
+    },
+
+    _showNudge(key, message) {
+        if (this._nudgeShown(key)) return;
+        this._markNudgeShown(key);
+        this.showToast(message, 'success');
+    },
+
+    _removeStartHereBadge() {
+        const badge = document.querySelector('.start-here-badge');
+        if (badge) badge.remove();
+        this.markOnboardSeen();
+    },
+
+    _hasRealData() {
+        return this.data.expenses.length > 0 ||
+            this.data.events.filter(ev => !ev.isInitial).length > 0;
+    },
+
+    _renderRichEmptyList() {
+        return `<div class="empty-state-rich">
+            <p>This is where your expenses and fund events appear.<br>FundFlow tracks two kinds of expenses:</p>
+            <div class="empty-state-minicards">
+                <div class="empty-state-minicard">
+                    <div class="minicard-icon">\u{1F4BB}</div>
+                    <div class="minicard-title">CapEx</div>
+                    <div class="minicard-desc">One-time purchases on a cycle (laptops, phones, furniture). FundFlow tracks funding progress toward each one.</div>
+                </div>
+                <div class="empty-state-minicard">
+                    <div class="minicard-icon">\u{1F504}</div>
+                    <div class="minicard-title">OpEx</div>
+                    <div class="minicard-desc">Ongoing subscriptions (hosting, software, services). These are deducted from your gains continuously.</div>
+                </div>
+            </div>
+            <p style="margin-bottom: 4px;">And two kinds of events:</p>
+            <div class="empty-state-minicards">
+                <div class="empty-state-minicard">
+                    <div class="minicard-icon">\u{1F4B0}</div>
+                    <div class="minicard-title">Deposits</div>
+                    <div class="minicard-desc">Money added to the fund. Your initial investment is automatically tracked.</div>
+                </div>
+                <div class="empty-state-minicard">
+                    <div class="minicard-icon">\u{1F4C9}</div>
+                    <div class="minicard-title">Rate Changes</div>
+                    <div class="minicard-desc">Adjustments to your expected return over time.</div>
+                </div>
+            </div>
+            <div class="empty-state-actions">
+                <button class="btn btn-primary btn-sm" onclick="FundFlow.openExpenseModal()">Add an expense</button>
+                <button class="btn btn-secondary btn-sm" onclick="FundFlow.openEventModal()">Add an event</button>
+                <button class="btn btn-sm" onclick="FundFlow.loadExampleData()">Load example data</button>
+            </div>
+        </div>`;
     },
 
     // ========== UTILS ==========

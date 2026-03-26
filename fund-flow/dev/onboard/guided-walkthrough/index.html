@@ -725,6 +725,173 @@
             .chart-tab { padding: 5px 8px; font-size: 0.7rem; }
             .expense-name { font-size: 0.85rem; }
         }
+        /* ========== GUIDED TOUR ========== */
+        .tour-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            z-index: 9000;
+            pointer-events: none;
+            transition: box-shadow 0.4s ease;
+        }
+        .tour-overlay.active {
+            pointer-events: auto;
+        }
+        .tour-tooltip {
+            position: fixed;
+            z-index: 9001;
+            background: var(--bg-card);
+            border: 1px solid var(--accent-primary);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            max-width: 340px;
+            width: 90vw;
+            box-shadow: var(--shadow-lg), 0 0 20px rgba(0, 212, 170, 0.15);
+            opacity: 0;
+            transform: translateY(8px);
+            transition: opacity 0.25s ease, transform 0.25s ease;
+            pointer-events: auto;
+        }
+        .tour-tooltip.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .tour-tooltip-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+            letter-spacing: -0.01em;
+        }
+        .tour-tooltip-body {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+            margin-bottom: 16px;
+        }
+        .tour-tooltip-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .tour-steps {
+            display: flex;
+            gap: 4px;
+            align-items: center;
+        }
+        .tour-step-dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: var(--border-light);
+            transition: background 0.2s ease;
+        }
+        .tour-step-dot.active {
+            background: var(--accent-primary);
+            width: 8px; height: 8px;
+        }
+        .tour-step-dot.completed {
+            background: var(--accent-primary);
+            opacity: 0.5;
+        }
+        .tour-btn-row {
+            display: flex;
+            gap: 6px;
+        }
+        .tour-btn {
+            padding: 7px 14px;
+            border: none;
+            border-radius: var(--radius-md);
+            font-size: 0.75rem;
+            font-weight: 500;
+            cursor: pointer;
+            font-family: var(--font-sans);
+            transition: all 0.2s ease;
+        }
+        .tour-btn-primary {
+            background: var(--accent-primary);
+            color: var(--bg-primary);
+        }
+        .tour-btn-primary:hover {
+            background: #00e6b8;
+        }
+        .tour-btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+        }
+        .tour-btn-secondary:hover {
+            background: var(--border-light);
+            color: var(--text-primary);
+        }
+        .tour-btn-ghost {
+            background: none;
+            color: var(--text-muted);
+            padding: 7px 10px;
+        }
+        .tour-btn-ghost:hover {
+            color: var(--text-secondary);
+        }
+        /* Welcome/Done full-screen card */
+        .tour-card {
+            position: fixed;
+            z-index: 9001;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%) scale(0.95);
+            background: var(--bg-card);
+            border: 1px solid var(--accent-primary);
+            border-radius: var(--radius-lg);
+            padding: 32px;
+            max-width: 440px;
+            width: 90vw;
+            text-align: center;
+            box-shadow: var(--shadow-lg), 0 0 30px rgba(0, 212, 170, 0.1);
+            opacity: 0;
+            transition: opacity 0.3s ease, transform 0.3s ease;
+            pointer-events: auto;
+        }
+        .tour-card.visible {
+            opacity: 1;
+            transform: translate(-50%, -50%) scale(1);
+        }
+        .tour-card-icon {
+            font-size: 2rem;
+            margin-bottom: 12px;
+        }
+        .tour-card h2 {
+            font-size: 1.2rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .tour-card p {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+        .tour-card-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        @media (max-width: 700px) {
+            .tour-tooltip {
+                position: fixed;
+                bottom: 0; left: 0; right: 0;
+                top: auto;
+                max-width: 100%;
+                width: 100%;
+                border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+                transform: translateY(100%);
+            }
+            .tour-tooltip.visible {
+                transform: translateY(0);
+            }
+        }
     </style>
 </head>
 <body>
@@ -741,16 +908,16 @@
 #vsel a:hover{background:#1e1e3a;color:#fff}
 #vsel .vsel-cur{color:#6fc;font-weight:600}
 </style>
-<details id="vsel"><summary>main</summary>
+<details id="vsel"><summary>dev/onboard/guided-walkthrough</summary>
 <div class="vsel-dd">
 <div class="vsel-hd">current</div>
-<a href="./" class="vsel-cur">main</a>
+<a href="../../../">main</a>
 <hr class="vsel-hr">
 <div class="vsel-hd">releases</div>
-<a href="v1.6.0/">v1.6.0</a><a href="v1.5.0/">v1.5.0</a><a href="v1.4.0/">v1.4.0</a><a href="v1.3.1/">v1.3.1</a><a href="v1.3.0/">v1.3.0</a><a href="v1.2.1/">v1.2.1</a><a href="v1.2.0/">v1.2.0</a><a href="v1.1.0/">v1.1.0</a><a href="v1.0.0/">v1.0.0</a><a href="v0.1.0/">v0.1.0</a>
+<a href="../../../v1.6.0/">v1.6.0</a><a href="../../../v1.5.0/">v1.5.0</a><a href="../../../v1.4.0/">v1.4.0</a><a href="../../../v1.3.1/">v1.3.1</a><a href="../../../v1.3.0/">v1.3.0</a><a href="../../../v1.2.1/">v1.2.1</a><a href="../../../v1.2.0/">v1.2.0</a><a href="../../../v1.1.0/">v1.1.0</a><a href="../../../v1.0.0/">v1.0.0</a><a href="../../../v0.1.0/">v0.1.0</a>
 <hr class="vsel-hr">
 <div class="vsel-hd">development</div>
-<a href="dev/feature/annual-summary/">dev/feature/annual-summary</a><a href="dev/feature/combinable-filters/">dev/feature/combinable-filters</a><a href="dev/feature/expense-growth-simulator/">dev/feature/expense-growth-simulator</a><a href="dev/feature/mc-debounce/">dev/feature/mc-debounce</a><a href="dev/feature/sustainability-gauge/">dev/feature/sustainability-gauge</a><a href="dev/feature/what-if-scenarios/">dev/feature/what-if-scenarios</a><a href="dev/onboard/combo-wizard-states/">dev/onboard/combo-wizard-states</a><a href="dev/onboard/guided-walkthrough/">dev/onboard/guided-walkthrough</a><a href="dev/onboard/learn-by-doing/">dev/onboard/learn-by-doing</a><a href="dev/onboard/smart-empty-states/">dev/onboard/smart-empty-states</a>
+<a href="../../../dev/feature/annual-summary/">dev/feature/annual-summary</a><a href="../../../dev/feature/combinable-filters/">dev/feature/combinable-filters</a><a href="../../../dev/feature/expense-growth-simulator/">dev/feature/expense-growth-simulator</a><a href="../../../dev/feature/mc-debounce/">dev/feature/mc-debounce</a><a href="../../../dev/feature/sustainability-gauge/">dev/feature/sustainability-gauge</a><a href="../../../dev/feature/what-if-scenarios/">dev/feature/what-if-scenarios</a><a href="../../../dev/onboard/combo-wizard-states/">dev/onboard/combo-wizard-states</a><a href="../../../dev/onboard/guided-walkthrough/" class="vsel-cur">dev/onboard/guided-walkthrough</a><a href="../../../dev/onboard/learn-by-doing/">dev/onboard/learn-by-doing</a><a href="../../../dev/onboard/smart-empty-states/">dev/onboard/smart-empty-states</a>
 </div>
 </details>
 <!-- /version-selector -->
@@ -795,6 +962,7 @@
                     <div class="dropdown-menu" id="menuDropdown">
                         <button class="dropdown-item" id="loadExampleBtn">Load Example Data</button>
                         <button class="dropdown-item" id="toggleHelpBtn">Toggle Help</button>
+                        <button class="dropdown-item" id="replayTourBtn">Replay Tour</button>
                         <div class="dropdown-divider"></div>
                         <button class="dropdown-item" id="exportBtn">Export JSON</button>
                         <button class="dropdown-item" id="importBtn">Import JSON</button>

@@ -37,10 +37,7 @@ const TimelinePlugin = {
 
     afterInit(chart) {
         const state = TimelinePlugin._state;
-        // Only track the projection (line) chart — ignore bar charts etc.
-        if (chart.config.type === 'line') {
-            state.chartRef = chart;
-        }
+        state.chartRef = chart;
 
         // Only bind DOM listeners once (canvas element is reused across chart recreations)
         if (state.bound) return;
@@ -274,9 +271,9 @@ const FundFlow = {
     },
 
     chart: null,
-    breakdownChart: null,
-    visiblePanes: { breakdown: false, priority: false, cashflow: false, milestones: false },
-    priorityMode: 'full', // 'full' or 'compact'
+    secondaryChart: null,
+    projectionPinned: false,
+    currentView: 'projection',
     timelineDate: new Date(),
     editingEventId: null,
     editingExpenseId: null,
@@ -290,27 +287,6 @@ const FundFlow = {
         this.bindEvents();
         this.initChart();
         this.render();
-        this.listenForSWUpdate();
-    },
-
-    listenForSWUpdate() {
-        if (!('serviceWorker' in navigator)) return;
-        navigator.serviceWorker.ready.then((registration) => {
-            // Check for waiting worker on page load.
-            if (registration.waiting) {
-                this.showToast('Update available \u2014 refresh to get the latest version');
-            }
-            // Listen for new service workers that finish installing.
-            registration.addEventListener('updatefound', () => {
-                const newWorker = registration.installing;
-                if (!newWorker) return;
-                newWorker.addEventListener('statechange', () => {
-                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                        this.showToast('Update available \u2014 refresh to get the latest version');
-                    }
-                });
-            });
-        });
     },
 
     loadFromStorage() {
@@ -497,18 +473,14 @@ const FundFlow = {
         document.getElementById('loadExampleBtn').addEventListener('click', () => this.loadExampleData());
         document.getElementById('toggleHelpBtn').addEventListener('click', () => this.toggleHelp());
 
-        // Pane toggle buttons
-        document.querySelectorAll('.pane-toggle').forEach(btn => {
-            btn.addEventListener('click', (e) => this.togglePane(e.target.dataset.pane));
+        // Chart tabs
+        document.querySelectorAll('.chart-tab').forEach(tab => {
+            tab.addEventListener('click', (e) => this.switchView(e.target.dataset.view));
         });
 
-        // Priority mode toggle (full/compact)
-        document.querySelectorAll('.pane-mode-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                this.priorityMode = e.target.dataset.mode;
-                document.querySelectorAll('.pane-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === this.priorityMode));
-                if (this.visiblePanes.priority) this._renderPriorityPane();
-            });
+        // Pin projection button
+        document.getElementById('pinProjectionBtn').addEventListener('click', () => {
+            this.toggleProjectionPin();
         });
 
         // Filter tabs
@@ -600,25 +572,14 @@ const FundFlow = {
             this._renderTimer = null;
             this.renderProjection({ skipList: debounceMs > 0 });
         });
-        // Debounce the expensive list re-render and visible panes
+        // Debounce the expensive list re-render if enabled
         if (debounceMs > 0) {
             if (this._listRenderTimer) clearTimeout(this._listRenderTimer);
             this._listRenderTimer = setTimeout(() => {
                 this._listRenderTimer = null;
                 this.renderUnifiedList();
-                this._refreshVisiblePanes();
             }, debounceMs);
-        } else {
-            this._refreshVisiblePanes();
         }
-    },
-
-    // Refresh all currently visible panes (called during timeline scrub).
-    _refreshVisiblePanes() {
-        if (this.visiblePanes.breakdown) this._renderBreakdownPane();
-        if (this.visiblePanes.priority) this._renderPriorityPane();
-        if (this.visiblePanes.cashflow) this._renderCashFlowPane();
-        if (this.visiblePanes.milestones) this._renderMilestonesPane();
     },
 
     resetToToday() {
@@ -653,14 +614,6 @@ const FundFlow = {
             state.xPixel = xPixel;
             state.dateLabel = date.toISOString().split('T')[0];
             chart.draw();
-        }
-    },
-
-    _restoreTimelineBar() {
-        const todayStr = new Date().toISOString().split('T')[0];
-        const currentStr = this.timelineDate.toISOString().split('T')[0];
-        if (currentStr !== todayStr) {
-            this._showTimelineBarAtDate(this.timelineDate);
         }
     },
 
@@ -1068,8 +1021,6 @@ const FundFlow = {
                 ? progress >= 100
                 : allocatedAnnualGains >= annualCost;
 
-            const notYetStarted = gainStartDate > date;
-
             return {
                 ...exp,
                 annualCost,
@@ -1079,8 +1030,6 @@ const FundFlow = {
                 scheduledDate,
                 projectedDate,
                 lastProcurementDate: lastProcDate.toISOString().split('T')[0],
-                gainStartDate: gainStartDate.toISOString().split('T')[0],
-                notYetStarted,
                 isFunded
             };
         });
@@ -1377,7 +1326,6 @@ const FundFlow = {
                 case 'opex': return item.kind === 'expense' && item.subtype === 'opex';
                 case 'deposits': return item.kind === 'event' && (item.subtype === 'deposit');
                 case 'rates': return item.kind === 'event' && item.subtype === 'rate_change';
-                case 'procurements': return item.kind === 'event' && item.subtype === 'procurement';
                 default: return true;
             }
         });
@@ -1398,15 +1346,24 @@ const FundFlow = {
             return;
         }
 
-        // Keyed DOM update: reuse existing nodes, patch expenses in place, remove stale
+        // Keyed DOM update: reuse existing nodes, update in place, remove stale
+        const newKeys = filtered.map(item => item.key);
         const existingNodes = {};
         Array.from(container.children).forEach(child => {
             const key = child.getAttribute('data-item-key');
             if (key) existingNodes[key] = child;
         });
 
+        // Build desired HTML per key
+        const newHtmlByKey = {};
+        filtered.forEach(item => {
+            newHtmlByKey[item.key] = item.kind === 'expense'
+                ? this.renderExpenseRow(item.expense)
+                : this.renderEventRow(item.event);
+        });
+
         // Remove nodes whose keys are no longer present
-        const newKeySet = new Set(filtered.map(item => item.key));
+        const newKeySet = new Set(newKeys);
         Object.keys(existingNodes).forEach(key => {
             if (!newKeySet.has(key)) {
                 existingNodes[key].remove();
@@ -1414,27 +1371,28 @@ const FundFlow = {
             }
         });
 
+        // Scratch element for parsing HTML into DOM nodes
+        const scratch = document.createElement('div');
+
         // Update or insert nodes in order
         let prevNode = null;
-        for (let i = 0; i < filtered.length; i++) {
-            const item = filtered[i];
-            const key = item.key;
+        for (let i = 0; i < newKeys.length; i++) {
+            const key = newKeys[i];
             let node = existingNodes[key];
 
             if (node) {
-                // Existing node — patch dynamic values without rebuilding DOM
-                if (item.kind === 'expense') {
-                    this._updateExpenseInPlace(node, item.expense);
+                // Update content in place (replace the inner row element)
+                scratch.innerHTML = newHtmlByKey[key];
+                const newChild = scratch.firstElementChild;
+                if (newChild) {
+                    // Swap the row element inside the keyed wrapper
+                    node.replaceChildren(newChild);
                 }
-                // Event rows are static — nothing to patch
             } else {
-                // New item — build full DOM node
-                const html = item.kind === 'expense'
-                    ? this.renderExpenseRow(item.expense)
-                    : this.renderEventRow(item.event);
+                // Create new keyed wrapper with the row inside
                 node = document.createElement('div');
                 node.setAttribute('data-item-key', key);
-                node.innerHTML = html;
+                node.innerHTML = newHtmlByKey[key];
                 existingNodes[key] = node;
             }
 
@@ -1467,7 +1425,6 @@ const FundFlow = {
             opex: items.filter(i => i.kind === 'expense' && i.subtype === 'opex').length,
             deposits: items.filter(i => i.kind === 'event' && i.subtype === 'deposit').length,
             rates: items.filter(i => i.kind === 'event' && i.subtype === 'rate_change').length,
-            procurements: items.filter(i => i.kind === 'event' && i.subtype === 'procurement').length,
         };
 
         document.querySelectorAll('.filter-tab').forEach(tab => {
@@ -1499,25 +1456,20 @@ const FundFlow = {
 
         // Quick Win 9: Underfunded warning when projected date > scheduled date
         let underfundedWarning = '';
-        if (!exp.notYetStarted && exp.scheduledDate && exp.projectedDate && exp.projectedDate > exp.scheduledDate && exp.progress < 100) {
+        if (exp.scheduledDate && exp.projectedDate && exp.projectedDate > exp.scheduledDate && exp.progress < 100) {
             const schedMs = new Date(exp.scheduledDate).getTime();
             const projMs = new Date(exp.projectedDate).getTime();
             const monthsLate = Math.round((projMs - schedMs) / (30.44 * 24 * 60 * 60 * 1000));
             if (monthsLate > 0) {
-                underfundedWarning = 'Underfunded \u2014 projected completion ' + monthsLate + ' month' + (monthsLate !== 1 ? 's' : '') + ' late';
+                underfundedWarning = '<div style="font-size: 0.7rem; color: var(--accent-warning); margin-top: 2px;">Underfunded \u2014 projected completion ' + monthsLate + ' month' + (monthsLate !== 1 ? 's' : '') + ' late</div>';
             }
         }
 
-        // Dim expenses that haven't started yet at the current timeline date
-        const futureStyle = exp.notYetStarted ? ' style="opacity: 0.45;"' : '';
-        const futureLabel = exp.notYetStarted ? ' <span class="expense-future-label" data-role="future-label" style="font-size: 0.6rem; color: var(--accent-secondary); text-transform: uppercase; letter-spacing: 0.3px;">Starts ' + exp.gainStartDate + '</span>' : '';
-
-        return '<div class="expense-row"' + futureStyle + ' data-not-started="' + (exp.notYetStarted ? '1' : '0') + '">' +
+        return '<div class="expense-row">' +
             '<div class="expense-info">' +
                 '<div class="expense-name-row">' +
                     '<span class="expense-name">' + this.escapeHtml(exp.name) + '</span>' +
                     '<span class="expense-type capex">CapEx</span>' +
-                    futureLabel +
                 '</div>' +
                 '<div class="expense-meta">' +
                     '<span>Every ' + exp.interval + ' years</span>' +
@@ -1525,16 +1477,16 @@ const FundFlow = {
                 '</div>' +
                 '<div class="progress-section">' +
                     '<div class="progress-bar">' +
-                        '<div class="progress-fill ' + progressClass + '" data-role="progress-fill" style="width: ' + Math.min(exp.progress, 100) + '%"></div>' +
+                        '<div class="progress-fill ' + progressClass + '" style="width: ' + Math.min(exp.progress, 100) + '%"></div>' +
                     '</div>' +
                     '<div class="progress-info">' +
-                        '<span class="progress-percent" data-role="progress-pct">' + exp.progress.toFixed(0) + '% funded &middot; ' + accumulatedStr + '</span>' +
-                        '<span class="progress-dates" data-role="progress-dates">' +
+                        '<span class="progress-percent">' + exp.progress.toFixed(0) + '% funded &middot; ' + accumulatedStr + '</span>' +
+                        '<span class="progress-dates">' +
                             (exp.scheduledDate ? 'Sched: ' + exp.scheduledDate : '') +
                             (exp.projectedDate ? ' &rarr; Proj: ' + exp.projectedDate : '') +
                         '</span>' +
                     '</div>' +
-                    '<div data-role="underfunded-warn" style="font-size: 0.7rem; color: var(--accent-warning); margin-top: 2px;">' + underfundedWarning + '</div>' +
+                    underfundedWarning +
                 '</div>' +
             '</div>' +
             '<div class="expense-cost">' + this.formatNumber(exp.cost) + ' SEK</div>' +
@@ -1552,27 +1504,22 @@ const FundFlow = {
         // Quick Win 6: Show opportunity cost — gains consumed by this subscription
         const opportunityCost = 'This costs ' + this.formatNumber(exp.annualCost) + ' SEK/yr in gains unavailable for CapEx';
 
-        // Dim expenses that haven't started yet at the current timeline date
-        const futureStyle = exp.notYetStarted ? ' style="opacity: 0.45;"' : '';
-        const futureLabel = exp.notYetStarted ? ' <span class="expense-future-label" data-role="future-label" style="font-size: 0.6rem; color: var(--accent-secondary); text-transform: uppercase; letter-spacing: 0.3px;">Starts ' + exp.gainStartDate + '</span>' : '';
-
-        return '<div class="expense-row"' + futureStyle + ' data-not-started="' + (exp.notYetStarted ? '1' : '0') + '">' +
+        return '<div class="expense-row">' +
             '<div class="expense-info">' +
                 '<div class="expense-name-row">' +
                     '<span class="expense-name">' + this.escapeHtml(exp.name) + '</span>' +
                     '<span class="expense-type opex">Sub</span>' +
-                    futureLabel +
                 '</div>' +
-                '<div data-role="opex-info" class="opex-info">' +
+                '<div class="opex-info">' +
                     'Yearly: ' + this.formatNumber(exp.annualCost) + ' SEK | Allocated: ' + this.formatNumber(exp.allocatedGains) + ' SEK/yr | Since: ' + exp.lastProcurementDate +
                 '</div>' +
                 '<div class="progress-section">' +
                     '<div class="progress-bar">' +
-                        '<div class="progress-fill ' + progressClass + '" data-role="progress-fill" style="width: ' + Math.min(exp.progress, 100) + '%"></div>' +
+                        '<div class="progress-fill ' + progressClass + '" style="width: ' + Math.min(exp.progress, 100) + '%"></div>' +
                     '</div>' +
                     '<div class="progress-info">' +
-                        '<span class="progress-percent" data-role="progress-pct">' + exp.progress.toFixed(0) + '% covered</span>' +
-                        '<span class="progress-dates" data-role="progress-dates" style="color: var(--text-muted); font-size: 0.65rem;">' + opportunityCost + '</span>' +
+                        '<span class="progress-percent">' + exp.progress.toFixed(0) + '% covered</span>' +
+                        '<span class="progress-dates" style="color: var(--text-muted); font-size: 0.65rem;">' + opportunityCost + '</span>' +
                     '</div>' +
                 '</div>' +
             '</div>' +
@@ -1582,83 +1529,6 @@ const FundFlow = {
                 '<button class="icon-btn danger" onclick="FundFlow.deleteExpense(\'' + exp.id + '\')" title="Delete">&#x2715;</button>' +
             '</div>' +
         '</div>';
-    },
-
-    // Patch only the dynamic values inside an existing expense DOM node
-    _updateExpenseInPlace(node, exp) {
-        const fill = node.querySelector('[data-role="progress-fill"]');
-        if (fill) {
-            const pct = Math.min(exp.progress, 100);
-            fill.style.width = pct + '%';
-            fill.className = 'progress-fill ' + (exp.progress >= 100 ? '' : exp.progress >= 50 ? 'warning' : 'danger');
-        }
-
-        const pctSpan = node.querySelector('[data-role="progress-pct"]');
-        if (pctSpan) {
-            if (exp.type === 'capex') {
-                const accStr = this.formatNumber(Math.min(exp.allocatedGains, exp.cost)) + ' of ' + this.formatNumber(exp.cost) + ' SEK';
-                pctSpan.innerHTML = exp.progress.toFixed(0) + '% funded &middot; ' + accStr;
-            } else {
-                pctSpan.textContent = exp.progress.toFixed(0) + '% covered';
-            }
-        }
-
-        const dates = node.querySelector('[data-role="progress-dates"]');
-        if (dates) {
-            if (exp.type === 'capex') {
-                dates.innerHTML =
-                    (exp.scheduledDate ? 'Sched: ' + exp.scheduledDate : '') +
-                    (exp.projectedDate ? ' &rarr; Proj: ' + exp.projectedDate : '');
-            } else {
-                dates.textContent = 'This costs ' + this.formatNumber(exp.annualCost) + ' SEK/yr in gains unavailable for CapEx';
-            }
-        }
-
-        const warn = node.querySelector('[data-role="underfunded-warn"]');
-        if (warn) {
-            let msg = '';
-            if (!exp.notYetStarted && exp.scheduledDate && exp.projectedDate && exp.projectedDate > exp.scheduledDate && exp.progress < 100) {
-                const schedMs = new Date(exp.scheduledDate).getTime();
-                const projMs = new Date(exp.projectedDate).getTime();
-                const monthsLate = Math.round((projMs - schedMs) / (30.44 * 24 * 60 * 60 * 1000));
-                if (monthsLate > 0) {
-                    msg = 'Underfunded \u2014 projected completion ' + monthsLate + ' month' + (monthsLate !== 1 ? 's' : '') + ' late';
-                }
-            }
-            warn.textContent = msg;
-        }
-
-        const opexInfo = node.querySelector('[data-role="opex-info"]');
-        if (opexInfo) {
-            opexInfo.textContent = 'Yearly: ' + this.formatNumber(exp.annualCost) + ' SEK | Allocated: ' + this.formatNumber(exp.allocatedGains) + ' SEK/yr | Since: ' + exp.lastProcurementDate;
-        }
-
-        // Toggle not-yet-started dimming and label
-        const row = node.querySelector('.expense-row') || node;
-        const wasNotStarted = row.getAttribute('data-not-started') === '1';
-        const isNotStarted = !!exp.notYetStarted;
-        if (wasNotStarted !== isNotStarted) {
-            row.style.opacity = isNotStarted ? '0.45' : '';
-            row.setAttribute('data-not-started', isNotStarted ? '1' : '0');
-            const existingLabel = row.querySelector('[data-role="future-label"]');
-            if (isNotStarted && !existingLabel) {
-                const nameRow = row.querySelector('.expense-name-row');
-                if (nameRow) {
-                    const span = document.createElement('span');
-                    span.className = 'expense-future-label';
-                    span.setAttribute('data-role', 'future-label');
-                    span.style.cssText = 'font-size: 0.6rem; color: var(--accent-secondary); text-transform: uppercase; letter-spacing: 0.3px;';
-                    span.textContent = 'Starts ' + exp.gainStartDate;
-                    nameRow.appendChild(span);
-                }
-            } else if (!isNotStarted && existingLabel) {
-                existingLabel.remove();
-            }
-        } else if (isNotStarted) {
-            // Update the date text even if the flag hasn't toggled
-            const label = row.querySelector('[data-role="future-label"]');
-            if (label) label.textContent = 'Starts ' + exp.gainStartDate;
-        }
     },
 
     renderEventRow(ev) {
@@ -1722,9 +1592,8 @@ const FundFlow = {
         this.chart = new Chart(ctx, this.getChartConfig());
     },
 
-    getChartConfig(type) {
-        if (!type) type = 'projection';
-        if (type === 'projection') {
+    getChartConfig() {
+        if (this.currentView === 'projection') {
             const projYears = this.data.settings.projectionYears || 20;
             const projections = this.calculateProjection(projYears);
             const opts = this.getChartOptions(true);
@@ -1968,279 +1837,123 @@ const FundFlow = {
     },
 
     updateChart() {
-        // Always render the projection in the main chart
+        if (this.projectionPinned) {
+            // Pinned mode: main chart is ALWAYS projection
+            this._renderMainProjection();
+            // Also refresh the secondary view if visible
+            this._renderSecondaryView();
+        } else {
+            // Normal mode: main chart shows current view
+            this._renderMainView();
+        }
+    },
+
+    // Render the main chart area based on currentView (normal mode)
+    _renderMainView() {
+        // Clear timeline indicator position — pixel offset won't match new scale
         TimelinePlugin._state.xPixel = null;
         TimelinePlugin._state.dateLabel = null;
 
         const canvas = document.getElementById('mainChart');
+        const priorityView = document.getElementById('priorityView');
+        const cashflowView = document.getElementById('cashflowView');
+
+        // Show/hide appropriate view containers
+        const isChartView = this.currentView === 'projection' || this.currentView === 'breakdown';
+        canvas.style.display = isChartView ? '' : 'none';
+        if (priorityView) priorityView.style.display = this.currentView === 'priority' ? '' : 'none';
+        if (cashflowView) cashflowView.style.display = this.currentView === 'cashflow' ? '' : 'none';
+
+        if (this.currentView === 'priority') {
+            this.renderPriorityQueue();
+            return;
+        }
+        if (this.currentView === 'cashflow') {
+            this.renderCashFlowLedger();
+            return;
+        }
+
         if (this.chart) {
             this.chart.destroy();
         }
         const ctx = canvas.getContext('2d');
-        this.chart = new Chart(ctx, this.getChartConfig('projection'));
-        this._restoreTimelineBar();
-
-        // Refresh all visible panes
-        this._refreshVisiblePanes();
+        this.chart = new Chart(ctx, this.getChartConfig());
     },
 
-    // Toggle a pane on/off
-    togglePane(pane) {
-        this.visiblePanes[pane] = !this.visiblePanes[pane];
+    // Render projection in the main chart (pinned mode — always projection)
+    _renderMainProjection() {
+        TimelinePlugin._state.xPixel = null;
+        TimelinePlugin._state.dateLabel = null;
 
-        // Update toggle button state
-        document.querySelectorAll('.pane-toggle').forEach(btn => {
-            btn.classList.toggle('active', this.visiblePanes[btn.dataset.pane]);
-        });
+        const canvas = document.getElementById('mainChart');
+        const priorityView = document.getElementById('priorityView');
+        const cashflowView = document.getElementById('cashflowView');
 
-        // Show/hide pane card
-        const paneIds = { breakdown: 'breakdownPane', priority: 'priorityPane', cashflow: 'cashflowPane', milestones: 'milestonesPane' };
-        const card = document.getElementById(paneIds[pane]);
-        if (card) card.style.display = this.visiblePanes[pane] ? '' : 'none';
+        canvas.style.display = '';
+        if (priorityView) priorityView.style.display = 'none';
+        if (cashflowView) cashflowView.style.display = 'none';
 
-        // Render or destroy pane content
-        if (this.visiblePanes[pane]) {
-            if (pane === 'breakdown') this._renderBreakdownPane();
-            else if (pane === 'priority') this._renderPriorityPane();
-            else if (pane === 'cashflow') this._renderCashFlowPane();
-            else if (pane === 'milestones') this._renderMilestonesPane();
-        } else {
-            // Destroy breakdown chart when hiding to free resources
-            if (pane === 'breakdown' && this.breakdownChart) {
-                this.breakdownChart.destroy();
-                this.breakdownChart = null;
-            }
+        if (this.chart) {
+            this.chart.destroy();
         }
-    },
 
-    // Render breakdown bar chart into its pane
-    _renderBreakdownPane() {
-        const canvas = document.getElementById('breakdownChart');
-        if (!canvas) return;
-        if (this.breakdownChart) {
-            this.breakdownChart.destroy();
-        }
+        // Force projection config for main chart
+        const savedView = this.currentView;
+        this.currentView = 'projection';
         const ctx = canvas.getContext('2d');
-        this.breakdownChart = new Chart(ctx, this.getChartConfig('breakdown'));
+        this.chart = new Chart(ctx, this.getChartConfig());
+        this.currentView = savedView;
     },
 
-    // Render priority queue into its pane
-    _renderPriorityPane() {
-        const container = document.getElementById('priorityView');
-        if (!container) return;
-        if (this.priorityMode === 'compact') {
-            this._renderPriorityCompact(container);
-        } else {
-            this._renderPriorityFull(container);
-        }
-    },
+    // Render the secondary chart card content based on currentView (pinned mode)
+    _renderSecondaryView() {
+        const card = document.getElementById('secondaryChartCard');
+        if (!card) return;
 
-    // Render cash flow ledger into its pane (uses full table version)
-    _renderCashFlowPane() {
-        const container = document.getElementById('cashflowView');
-        if (container) this._renderCashFlowFull(container);
-    },
+        const secondaryCanvas = document.getElementById('secondaryChart');
+        const secPriority = document.getElementById('secondaryPriorityView');
+        const secCashflow = document.getElementById('secondaryCashflowView');
+        const title = document.getElementById('secondaryChartTitle');
 
-    // ========== MILESTONES PANE ==========
-    // Gantt-style horizontal timeline showing when each expense is projected
-    // to become fully funded, plotted against its scheduled purchase date.
-
-    _renderMilestonesPane() {
-        const container = document.getElementById('milestonesView');
-        if (!container) return;
-
-        const proj = this.project(this.timelineDate);
-        const expenses = proj.expenses;
-
-        if (expenses.length === 0) {
-            container.innerHTML = '<div class="empty-state">Add expenses to see funding milestones</div>';
+        // If viewing projection while pinned, hide secondary (projection is already in main)
+        if (this.currentView === 'projection') {
+            card.style.display = 'none';
             return;
         }
 
-        const settings = this.data.settings;
-        const projYears = settings.projectionYears || 20;
-        const axisStart = new Date(this.timelineDate);
-        const axisEnd = new Date(axisStart);
-        axisEnd.setFullYear(axisEnd.getFullYear() + projYears);
-        const axisStartMs = axisStart.getTime();
-        const axisEndMs = axisEnd.getTime();
-        const axisRange = axisEndMs - axisStartMs;
+        card.style.display = '';
 
-        // Map a date to a percentage position on the axis (clamped 0–100)
-        const dateToPercent = (d) => {
-            if (!d) return null;
-            const ms = new Date(d).getTime();
-            const pct = ((ms - axisStartMs) / axisRange) * 100;
-            return Math.max(0, Math.min(100, pct));
-        };
+        const viewTitles = { breakdown: 'Breakdown', priority: 'Priority Queue', cashflow: 'Cash Flow' };
+        if (title) title.textContent = viewTitles[this.currentView] || 'Breakdown';
 
-        // Generate axis year labels
-        const startYear = axisStart.getFullYear();
-        const endYear = axisEnd.getFullYear();
-        const labelYears = [];
-        // Pick ~5-8 evenly spaced years for labels
-        const yearSpan = endYear - startYear;
-        const step = yearSpan <= 8 ? 1 : yearSpan <= 16 ? 2 : Math.ceil(yearSpan / 8);
-        for (let y = startYear; y <= endYear; y += step) {
-            labelYears.push(y);
+        const isChartView = this.currentView === 'breakdown';
+        secondaryCanvas.style.display = isChartView ? '' : 'none';
+        if (secPriority) secPriority.style.display = this.currentView === 'priority' ? '' : 'none';
+        if (secCashflow) secCashflow.style.display = this.currentView === 'cashflow' ? '' : 'none';
+
+        if (this.currentView === 'priority') {
+            this._renderPriorityQueueInto(secPriority);
+            return;
         }
-        if (labelYears[labelYears.length - 1] !== endYear) labelYears.push(endYear);
-
-        // Separate CapEx and OpEx, sort CapEx by scheduled date
-        const capexItems = expenses.filter(e => e.type === 'capex');
-        const opexItems = expenses.filter(e => e.type === 'opex');
-
-        // Sort CapEx: items with scheduled dates first (ascending), then items without
-        capexItems.sort((a, b) => {
-            const aDate = a.scheduledDate ? new Date(a.scheduledDate).getTime() : Infinity;
-            const bDate = b.scheduledDate ? new Date(b.scheduledDate).getTime() : Infinity;
-            return aDate - bDate;
-        });
-
-        // Compute urgency colour for a CapEx item (reuses Priority Queue logic)
-        const getStatusColor = (exp) => {
-            if (exp.progress >= 100) return 'var(--accent-primary)';
-            if (exp.scheduledDate && exp.projectedDate) {
-                const schedMs = new Date(exp.scheduledDate).getTime();
-                const projMs = new Date(exp.projectedDate).getTime();
-                const urgencyDays = (schedMs - projMs) / this.MS_PER_DAY;
-                if (urgencyDays < 0) return 'var(--accent-danger)';
-                if (urgencyDays < 90) return 'var(--accent-warning)';
-                return 'var(--accent-success)';
-            }
-            return 'var(--text-muted)';
-        };
-
-        const getMarginDays = (exp) => {
-            if (!exp.scheduledDate || !exp.projectedDate) return null;
-            const schedMs = new Date(exp.scheduledDate).getTime();
-            const projMs = new Date(exp.projectedDate).getTime();
-            return Math.round((schedMs - projMs) / this.MS_PER_DAY);
-        };
-
-        const formatDate = (d) => d ? new Date(d).toLocaleDateString('sv-SE') : '—';
-
-        // Build axis labels HTML
-        let html = '<div class="milestone-axis">';
-        html += '<div class="milestone-axis-labels">';
-        labelYears.forEach(y => {
-            html += '<span>' + y + '</span>';
-        });
-        html += '</div>';
-
-        // CapEx section header
-        if (capexItems.length > 0) {
-            html += '<div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 12px 2px; font-weight: 600;">Capital Expenses</div>';
-
-            capexItems.forEach(exp => {
-                const color = getStatusColor(exp);
-                const marginDays = getMarginDays(exp);
-                const projPct = dateToPercent(exp.projectedDate);
-                const schedPct = dateToPercent(exp.scheduledDate);
-                const isFunded = exp.progress >= 100;
-
-                // Tooltip content
-                let tooltipContent = '<strong>' + this.escapeHtml(exp.name) + '</strong><br>';
-                tooltipContent += 'Cost: ' + this.formatNumber(exp.cost) + ' SEK every ' + (exp.interval || '?') + ' yr<br>';
-                tooltipContent += 'Annual: ' + this.formatNumber(exp.annualCost) + ' SEK/yr<br>';
-                tooltipContent += 'Progress: ' + Math.round(exp.progress) + '%<br>';
-                tooltipContent += 'Due: ' + formatDate(exp.scheduledDate) + '<br>';
-                tooltipContent += 'Projected: ' + formatDate(exp.projectedDate);
-                if (marginDays !== null) {
-                    const absDays = Math.abs(marginDays);
-                    const months = Math.round(absDays / 30.44);
-                    tooltipContent += '<br><span style="color: ' + color + '; font-weight: 600;">';
-                    if (marginDays < 0) {
-                        tooltipContent += months + ' month' + (months !== 1 ? 's' : '') + ' behind schedule';
-                    } else {
-                        tooltipContent += months + ' month' + (months !== 1 ? 's' : '') + ' ahead of schedule';
-                    }
-                    tooltipContent += '</span>';
-                }
-
-                html += '<div class="milestone-row">';
-                // Label column
-                html += '<div class="milestone-label">';
-                html += '<span class="milestone-label-name">' + this.escapeHtml(exp.name);
-                if (isFunded) html += ' <span class="milestone-check">\u2713</span>';
-                html += '</span>';
-                html += '<span class="milestone-label-cost">' + this.formatNumber(exp.annualCost) + ' SEK/yr</span>';
-                html += '</div>';
-
-                // Track column
-                html += '<div class="milestone-track">';
-
-                // Progress fill bar
-                const fillWidth = Math.min(100, exp.progress);
-                html += '<div class="milestone-fill" style="width: ' + fillWidth + '%; background: ' + color + '; opacity: 0.7;"></div>';
-
-                // Margin/danger zone between scheduled and projected markers
-                if (schedPct !== null && projPct !== null && !isFunded) {
-                    const leftPct = Math.min(schedPct, projPct);
-                    const rightPct = Math.max(schedPct, projPct);
-                    const zoneClass = marginDays < 0 ? 'milestone-zone-danger' : 'milestone-zone-margin';
-                    html += '<div class="milestone-zone ' + zoneClass + '" style="left: ' + leftPct + '%; width: ' + (rightPct - leftPct) + '%;"></div>';
-                }
-
-                // Scheduled date diamond marker
-                if (schedPct !== null) {
-                    html += '<div class="milestone-marker milestone-marker-scheduled" style="left: ' + schedPct + '%;"></div>';
-                }
-
-                // Projected date circle marker
-                if (projPct !== null && !isFunded) {
-                    html += '<div class="milestone-marker milestone-marker-projected" style="left: ' + projPct + '%; border-color: ' + color + ';"></div>';
-                }
-
-                html += '</div>'; // .milestone-track
-
-                // Tooltip
-                html += '<div class="milestone-tooltip">' + tooltipContent + '</div>';
-
-                html += '</div>'; // .milestone-row
-            });
+        if (this.currentView === 'cashflow') {
+            this._renderCashFlowLedgerInto(secCashflow);
+            return;
         }
 
-        // OpEx section
-        if (opexItems.length > 0) {
-            html += '<div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: 10px 12px 2px; font-weight: 600;">Subscriptions</div>';
-
-            opexItems.forEach(exp => {
-                // OpEx coverage: what fraction of annual cost is covered by allocated gains
-                const coverage = exp.annualCost > 0 ? Math.min(100, (exp.allocatedAnnualGains / exp.annualCost) * 100) : 0;
-                const isCovered = coverage >= 100;
-                const color = isCovered ? 'var(--accent-primary)' : coverage >= 50 ? 'var(--accent-warning)' : 'var(--accent-danger)';
-
-                let tooltipContent = '<strong>' + this.escapeHtml(exp.name) + '</strong><br>';
-                tooltipContent += 'Annual cost: ' + this.formatNumber(exp.annualCost) + ' SEK/yr<br>';
-                tooltipContent += 'Allocated: ' + this.formatNumber(exp.allocatedAnnualGains) + ' SEK/yr<br>';
-                tooltipContent += 'Coverage: ' + Math.round(coverage) + '%';
-
-                html += '<div class="milestone-row">';
-                html += '<div class="milestone-label">';
-                html += '<span class="milestone-label-name">' + this.escapeHtml(exp.name);
-                if (isCovered) html += ' <span class="milestone-check">\u2713</span>';
-                html += '</span>';
-                html += '<span class="milestone-label-cost">' + this.formatNumber(exp.annualCost) + ' SEK/yr</span>';
-                html += '</div>';
-
-                // OpEx bar: thin continuous line showing coverage ratio
-                html += '<div class="milestone-opex-track">';
-                html += '<div class="milestone-opex-bar" style="width: ' + coverage + '%; background: ' + color + ';"></div>';
-                html += '<span class="milestone-opex-label">' + Math.round(coverage) + '% covered</span>';
-                html += '</div>';
-
-                html += '<div class="milestone-tooltip">' + tooltipContent + '</div>';
-                html += '</div>'; // .milestone-row
-            });
+        // Breakdown bar chart in secondary
+        if (this.secondaryChart) {
+            this.secondaryChart.destroy();
         }
 
-        html += '</div>'; // .milestone-axis
-        container.innerHTML = html;
+        const savedView = this.currentView;
+        this.currentView = 'breakdown';
+        const ctx = secondaryCanvas.getContext('2d');
+        this.secondaryChart = new Chart(ctx, this.getChartConfig());
+        this.currentView = savedView;
     },
 
-    // Render priority queue — compact single-line rows (rank | name | urgency | mini bar | %)
-    _renderPriorityCompact(container) {
+    // Render priority queue into a specific container element
+    _renderPriorityQueueInto(container) {
         if (!container) return;
 
         const proj = this.project(this.timelineDate);
@@ -2296,12 +2009,145 @@ const FundFlow = {
         }).join('');
     },
 
+    // Render cash flow ledger into a specific container element
+    _renderCashFlowLedgerInto(container) {
+        if (!container) return;
+
+        const settings = this.data.settings;
+        const fundStart = new Date(settings.fundStartDate);
+        const expenses = this.data.expenses;
+        const events = this.data.events;
+
+        const startDate = new Date(this.timelineDate);
+        const months = [];
+
+        for (let i = 0; i < 24; i++) {
+            const mDate = new Date(startDate.getFullYear(), startDate.getMonth() + i, 1);
+            const mEnd = new Date(startDate.getFullYear(), startDate.getMonth() + i + 1, 0);
+            const mStr = mDate.toISOString().split('T')[0].slice(0, 7);
+
+            let inflows = 0;
+            let outflows = 0;
+            const details = [];
+
+            events.forEach(ev => {
+                if (ev.type !== 'deposit') return;
+                const evDate = new Date(ev.date);
+                if (evDate >= mDate && evDate <= mEnd) {
+                    inflows += ev.amount;
+                    details.push({ type: 'deposit', label: 'Deposit', amount: ev.amount });
+                }
+            });
+
+            const proj = this.project(mDate);
+            const monthlyGain = proj.effectiveBase * proj.rate / 12;
+            if (monthlyGain > 0) {
+                inflows += monthlyGain;
+                details.push({ type: 'gain', label: 'Est. gains', amount: monthlyGain });
+            }
+
+            expenses.forEach(exp => {
+                if (exp.type !== 'opex') return;
+                const expStart = exp.lastProcurementDate ? new Date(exp.lastProcurementDate) : fundStart;
+                if (mDate >= expStart || mDate >= fundStart) {
+                    const monthlyCost = exp.billingCycle === 'monthly' ? exp.cost : exp.cost / 12;
+                    outflows += monthlyCost;
+                    details.push({ type: 'opex', label: exp.name, amount: -monthlyCost });
+                }
+            });
+
+            expenses.forEach(exp => {
+                if (exp.type !== 'capex') return;
+                const lastProc = exp.lastProcurementDate ? new Date(exp.lastProcurementDate) : fundStart;
+                const scheduled = new Date(lastProc.getTime() + (exp.interval * 365.25 * 24 * 60 * 60 * 1000));
+                if (scheduled >= mDate && scheduled <= mEnd) {
+                    outflows += exp.cost;
+                    details.push({ type: 'capex', label: exp.name + ' (CapEx)', amount: -exp.cost });
+                }
+            });
+
+            events.forEach(ev => {
+                if (ev.type !== 'procurement') return;
+                const evDate = new Date(ev.date);
+                if (evDate >= mDate && evDate <= mEnd) {
+                    const alreadyCounted = details.some(d => d.type === 'capex' && d.label.startsWith(ev.expenseName || ''));
+                    if (!alreadyCounted) {
+                        outflows += ev.cost;
+                        details.push({ type: 'procurement', label: (ev.expenseName || 'Purchase') + ' (recorded)', amount: -ev.cost });
+                    }
+                }
+            });
+
+            const net = inflows - outflows;
+            months.push({ month: mStr, inflows, outflows, net, details });
+        }
+
+        let html = '<div style="font-size: 0.75rem;">';
+        html += '<div style="display: grid; grid-template-columns: 80px 1fr 1fr 1fr; gap: 4px; padding: 6px 12px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-subtle);">' +
+            '<span>Month</span><span style="text-align: right;">In</span><span style="text-align: right;">Out</span><span style="text-align: right;">Net</span></div>';
+
+        months.forEach(m => {
+            const netColor = m.net >= 0 ? 'var(--accent-primary)' : 'var(--accent-danger)';
+            html += '<div style="display: grid; grid-template-columns: 80px 1fr 1fr 1fr; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--border-subtle);">' +
+                '<span style="color: var(--text-secondary);">' + m.month + '</span>' +
+                '<span style="text-align: right; color: var(--accent-primary);">+' + this.formatNumber(m.inflows) + '</span>' +
+                '<span style="text-align: right; color: var(--accent-danger);">-' + this.formatNumber(m.outflows) + '</span>' +
+                '<span style="text-align: right; color: ' + netColor + '; font-weight: 600;">' + (m.net >= 0 ? '+' : '') + this.formatNumber(m.net) + '</span>' +
+            '</div>';
+        });
+
+        html += '</div>';
+        container.innerHTML = html;
+    },
+
+    toggleProjectionPin() {
+        this.projectionPinned = !this.projectionPinned;
+
+        const pinBtn = document.getElementById('pinProjectionBtn');
+        pinBtn.classList.toggle('pinned', this.projectionPinned);
+
+        // Update projection tab to show pinned indicator
+        const projTab = document.querySelector('.chart-tab[data-view="projection"]');
+        if (projTab) projTab.classList.toggle('tab-pinned', this.projectionPinned);
+
+        if (this.projectionPinned) {
+            // When pinning: if currently on projection, switch to breakdown so secondary has something to show
+            if (this.currentView === 'projection') {
+                this.currentView = 'breakdown';
+                document.querySelectorAll('.chart-tab').forEach(tab => {
+                    tab.classList.toggle('active', tab.dataset.view === 'breakdown');
+                });
+            }
+        } else {
+            // When unpinning: destroy secondary chart, hide card
+            if (this.secondaryChart) {
+                this.secondaryChart.destroy();
+                this.secondaryChart = null;
+            }
+            const card = document.getElementById('secondaryChartCard');
+            if (card) card.style.display = 'none';
+        }
+
+        this.updateChart();
+    },
+
+    switchView(view) {
+        this.currentView = view;
+        document.querySelectorAll('.chart-tab').forEach(tab => {
+            // In pinned mode, projection tab keeps 'tab-pinned' class but not 'active'
+            // unless the user clicks it explicitly
+            tab.classList.toggle('active', tab.dataset.view === view);
+        });
+        this.updateChart();
+    },
+
     // ========== PRIORITY QUEUE ==========
     // Advanced Feature: "Fund This First" — ranks CapEx expenses by urgency.
     // Urgency = how far behind the funding schedule an item is.
 
-    // Render priority queue — full view with progress bars, cost, due date
-    _renderPriorityFull(container) {
+    renderPriorityQueue() {
+        const container = document.getElementById('priorityView');
+        if (!container) return;
 
         const proj = this.project(this.timelineDate);
         const capexItems = proj.expenses.filter(e => e.type === 'capex');
@@ -2387,8 +2233,9 @@ const FundFlow = {
     // ========== CASH FLOW LEDGER ==========
     // Advanced Feature: Monthly cash flow schedule showing concrete inflows/outflows.
 
-    // Render cash flow — full table with events column, CapEx row highlighting
-    _renderCashFlowFull(container) {
+    renderCashFlowLedger() {
+        const container = document.getElementById('cashflowView');
+        if (!container) return;
 
         const settings = this.data.settings;
         const fundStart = new Date(settings.fundStartDate);
@@ -2431,7 +2278,7 @@ const FundFlow = {
             expenses.forEach(exp => {
                 if (exp.type !== 'opex') return;
                 const expStart = exp.lastProcurementDate ? new Date(exp.lastProcurementDate) : fundStart;
-                if (mDate >= expStart) {
+                if (mDate >= expStart || mDate >= fundStart) {
                     const monthlyCost = exp.billingCycle === 'monthly' ? exp.cost : exp.cost / 12;
                     outflows += monthlyCost;
                     details.push({ type: 'opex', label: exp.name, amount: -monthlyCost });
@@ -3054,10 +2901,6 @@ const FundFlow = {
         const threeMonthsFuture = new Date(today.getFullYear(), today.getMonth() + 3, today.getDate()).toISOString().split('T')[0];
         const oneYearFuture = new Date(today.getFullYear() + 1, today.getMonth(), today.getDate()).toISOString().split('T')[0];
 
-        // Pre-generate IDs for expenses referenced by procurement events
-        const macbookId = this.generateId();
-        const iphoneId = this.generateId();
-
         this.data = {
             settings: {
                 initialPrincipal: 250000,
@@ -3071,7 +2914,7 @@ const FundFlow = {
             },
             expenses: [
                 {
-                    id: macbookId,
+                    id: this.generateId(),
                     name: 'MacBook Pro',
                     type: 'capex',
                     cost: 35000,
@@ -3080,7 +2923,7 @@ const FundFlow = {
                     createdAt: twoYearsAgo
                 },
                 {
-                    id: iphoneId,
+                    id: this.generateId(),
                     name: 'iPhone',
                     type: 'capex',
                     cost: 18000,
@@ -3172,7 +3015,6 @@ const FundFlow = {
                     id: this.generateId(),
                     type: 'procurement',
                     date: oneYearAgo,
-                    expenseId: macbookId,
                     expenseName: 'MacBook Pro',
                     cost: 33000,
                     createdAt: oneYearAgo
@@ -3181,7 +3023,6 @@ const FundFlow = {
                     id: this.generateId(),
                     type: 'procurement',
                     date: sixMonthsAgo,
-                    expenseId: iphoneId,
                     expenseName: 'iPhone',
                     cost: 17500,
                     createdAt: sixMonthsAgo

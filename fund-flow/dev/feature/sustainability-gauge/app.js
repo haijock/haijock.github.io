@@ -275,7 +275,7 @@ const FundFlow = {
 
     chart: null,
     breakdownChart: null,
-    visiblePanes: { breakdown: false, priority: false, cashflow: false, milestones: false },
+    visiblePanes: { breakdown: false, priority: false, cashflow: false, milestones: false, sustainability: false },
     priorityMode: 'full', // 'full' or 'compact'
     timelineDate: new Date(),
     editingEventId: null,
@@ -619,6 +619,7 @@ const FundFlow = {
         if (this.visiblePanes.priority) this._renderPriorityPane();
         if (this.visiblePanes.cashflow) this._renderCashFlowPane();
         if (this.visiblePanes.milestones) this._renderMilestonesPane();
+        if (this.visiblePanes.sustainability) this._renderSustainabilityPane();
     },
 
     resetToToday() {
@@ -1994,7 +1995,7 @@ const FundFlow = {
         });
 
         // Show/hide pane card
-        const paneIds = { breakdown: 'breakdownPane', priority: 'priorityPane', cashflow: 'cashflowPane', milestones: 'milestonesPane' };
+        const paneIds = { breakdown: 'breakdownPane', priority: 'priorityPane', cashflow: 'cashflowPane', milestones: 'milestonesPane', sustainability: 'sustainabilityPane' };
         const card = document.getElementById(paneIds[pane]);
         if (card) card.style.display = this.visiblePanes[pane] ? '' : 'none';
 
@@ -2004,6 +2005,7 @@ const FundFlow = {
             else if (pane === 'priority') this._renderPriorityPane();
             else if (pane === 'cashflow') this._renderCashFlowPane();
             else if (pane === 'milestones') this._renderMilestonesPane();
+            else if (pane === 'sustainability') this._renderSustainabilityPane();
         } else {
             // Destroy breakdown chart when hiding to free resources
             if (pane === 'breakdown' && this.breakdownChart) {
@@ -2039,6 +2041,149 @@ const FundFlow = {
     _renderCashFlowPane() {
         const container = document.getElementById('cashflowView');
         if (container) this._renderCashFlowFull(container);
+    },
+
+    // ========== SUSTAINABILITY GAUGE PANE ==========
+    // Circular arc gauge showing the fund's sustainability ratio:
+    // annualGainAmount / totalAnnualCost. Above 100% = self-sustaining.
+
+    _renderSustainabilityPane() {
+        const container = document.getElementById('sustainabilityView');
+        if (!container) return;
+
+        const proj = this.project(this.timelineDate);
+        const { annualGainAmount, totalAnnualCost } = proj;
+
+        // Empty state: no expenses
+        if (totalAnnualCost === 0) {
+            container.innerHTML = '<div class="empty-state">Add expenses to see fund sustainability</div>';
+            return;
+        }
+
+        // Current ratio
+        const ratio = annualGainAmount / totalAnnualCost;
+        const ratioPercent = Math.round(ratio * 100);
+
+        // 30-day trend comparison
+        const prevDate = new Date(this.timelineDate);
+        prevDate.setDate(prevDate.getDate() - 30);
+        const prevProj = this.project(prevDate);
+        let trendPp = 0;
+        let trendClass = 'flat';
+        let trendArrow = '→';
+        if (prevProj.totalAnnualCost > 0) {
+            const prevRatio = prevProj.annualGainAmount / prevProj.totalAnnualCost;
+            trendPp = Math.round((ratio - prevRatio) * 100);
+            if (trendPp > 0) { trendClass = 'up'; trendArrow = '↑'; }
+            else if (trendPp < 0) { trendClass = 'down'; trendArrow = '↓'; }
+        }
+
+        // Surplus / deficit
+        const surplus = annualGainAmount - totalAnnualCost;
+
+        // Gauge geometry — semicircular arc from 180° to 0° (left to right)
+        // 0% maps to the left end, 200% maps to the right end, 100% is top centre
+        const cx = 120, cy = 110, r = 90;
+        const strokeWidth = 14;
+        // Arc goes from π (180°) to 0° — that's a semicircle
+        const startAngle = Math.PI;       // left
+        const endAngle = 0;               // right
+        const totalArc = Math.PI;         // semicircle
+        // Clamp displayed ratio to 0–200%
+        const clampedRatio = Math.max(0, Math.min(2, ratio));
+
+        // Build arc path for the background track
+        const arcPath = (startA, endA) => {
+            const x1 = cx + r * Math.cos(startA);
+            const y1 = cy - r * Math.sin(startA);
+            const x2 = cx + r * Math.cos(endA);
+            const y2 = cy - r * Math.sin(endA);
+            const large = (startA - endA) > Math.PI ? 1 : 0;
+            return `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}`;
+        };
+
+        // Colour for ratio value
+        const getColor = (pct) => {
+            if (pct < 60) return 'var(--accent-danger)';
+            if (pct < 100) return 'var(--accent-warning)';
+            if (pct < 150) return 'var(--accent-success)';
+            return '#14b8a6'; // teal
+        };
+
+        const gaugeColor = getColor(ratioPercent);
+
+        // Full semicircle length
+        const circumference = Math.PI * r;
+        // Fill length proportional to clamped ratio
+        const fillLength = (clampedRatio / 2) * circumference;
+
+        // Build zone segments for the background — 4 zones
+        const zones = [
+            { from: 0,   to: 0.3,  color: 'rgba(239, 68, 68, 0.15)' },   // 0–60%
+            { from: 0.3, to: 0.5,  color: 'rgba(245, 158, 11, 0.15)' },   // 60–100%
+            { from: 0.5, to: 0.75, color: 'rgba(16, 185, 129, 0.15)' },   // 100–150%
+            { from: 0.75, to: 1,   color: 'rgba(20, 184, 166, 0.15)' },   // 150–200%
+        ];
+
+        const zoneArcs = zones.map(z => {
+            const a1 = startAngle - z.from * totalArc;
+            const a2 = startAngle - z.to * totalArc;
+            return `<path d="${arcPath(a1, a2)}" stroke="${z.color}" stroke-width="${strokeWidth + 8}" fill="none" stroke-linecap="butt"/>`;
+        }).join('');
+
+        // Tick marks at 0%, 50%, 100%, 150%, 200%
+        const ticks = [0, 50, 100, 150, 200];
+        const tickMarks = ticks.map(pct => {
+            const frac = (pct / 200);
+            const a = startAngle - frac * totalArc;
+            const outerR = r + strokeWidth / 2 + 2;
+            const innerR = r + strokeWidth / 2 + 8;
+            const x1 = cx + outerR * Math.cos(a);
+            const y1 = cy - outerR * Math.sin(a);
+            const x2 = cx + innerR * Math.cos(a);
+            const y2 = cy - innerR * Math.sin(a);
+            const lx = cx + (innerR + 10) * Math.cos(a);
+            const ly = cy - (innerR + 10) * Math.sin(a);
+            const anchor = pct === 0 ? 'end' : pct === 200 ? 'start' : 'middle';
+            return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--text-muted)" stroke-width="1" opacity="0.5"/>
+                    <text x="${lx}" y="${ly}" text-anchor="${anchor}" dominant-baseline="middle"
+                          style="font-size: 0.55rem; fill: var(--text-muted); font-family: var(--font-mono);">${pct}%</text>`;
+        }).join('');
+
+        const svg = `
+            <svg class="gauge-svg" width="240" height="160" viewBox="0 0 240 160">
+                ${zoneArcs}
+                <!-- Background track -->
+                <path d="${arcPath(startAngle, endAngle)}"
+                      stroke="var(--border)" stroke-width="${strokeWidth}"
+                      fill="none" stroke-linecap="round" opacity="0.4"/>
+                <!-- Filled arc -->
+                <path d="${arcPath(startAngle, endAngle)}"
+                      stroke="${gaugeColor}" stroke-width="${strokeWidth}"
+                      fill="none" stroke-linecap="round"
+                      stroke-dasharray="${circumference}"
+                      stroke-dashoffset="${circumference - fillLength}"/>
+                ${tickMarks}
+                <!-- Centre value -->
+                <text x="${cx}" y="${cy - 8}" text-anchor="middle" class="gauge-value"
+                      style="fill: ${gaugeColor}">${ratioPercent}%</text>
+                <text x="${cx}" y="${cy + 14}" text-anchor="middle" class="gauge-label">sustainability</text>
+            </svg>`;
+
+        const trendSign = trendPp > 0 ? '+' : '';
+        const trendText = `${trendSign}${trendPp} pp vs 30 d ago`;
+
+        container.innerHTML = `
+            <div class="gauge-container">${svg}</div>
+            <div class="gauge-trend ${trendClass}">
+                <span class="arrow">${trendArrow}</span>
+                <span>${trendText}</span>
+            </div>
+            <div class="gauge-summary">
+                <span class="gauge-summary-item"><span class="gauge-summary-label">Annual gains:</span>${this.formatNumber(annualGainAmount)} SEK</span>
+                <span class="gauge-summary-item"><span class="gauge-summary-label">Annual expenses:</span>${this.formatNumber(totalAnnualCost)} SEK</span>
+                <span class="gauge-summary-item"><span class="gauge-summary-label">${surplus >= 0 ? 'Surplus' : 'Deficit'}:</span>${this.formatNumber(Math.abs(surplus))} SEK</span>
+            </div>`;
     },
 
     // ========== MILESTONES PANE ==========

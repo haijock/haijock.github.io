@@ -725,6 +725,179 @@
             .chart-tab { padding: 5px 8px; font-size: 0.7rem; }
             .expense-name { font-size: 0.85rem; }
         }
+
+        /* ========== SETUP WIZARD ========== */
+        .wizard-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1100;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(2px);
+        }
+        .wizard-overlay.open {
+            opacity: 1;
+            visibility: visible;
+        }
+        .wizard-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            width: 92%;
+            max-width: 480px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: var(--shadow-lg), 0 0 30px rgba(0, 212, 170, 0.08);
+            transform: translateY(20px) scale(0.95);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .wizard-overlay.open .wizard-card {
+            transform: translateY(0) scale(1);
+        }
+        .wizard-header {
+            padding: 20px 24px 0;
+        }
+        .wizard-step-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 16px;
+        }
+        .wizard-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--border-light);
+            transition: all 0.2s ease;
+        }
+        .wizard-dot.active {
+            background: var(--accent-primary);
+            width: 10px; height: 10px;
+        }
+        .wizard-dot.completed {
+            background: var(--accent-primary);
+            opacity: 0.5;
+        }
+        .wizard-step-label {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-left: 4px;
+        }
+        .wizard-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 6px;
+            letter-spacing: -0.02em;
+        }
+        .wizard-desc {
+            font-size: 0.82rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+            margin-bottom: 16px;
+        }
+        .wizard-body {
+            padding: 0 24px 20px;
+        }
+        .wizard-preview {
+            padding: 10px 14px;
+            background: rgba(0, 212, 170, 0.06);
+            border: 1px solid rgba(0, 212, 170, 0.15);
+            border-radius: var(--radius-md);
+            font-size: 0.78rem;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+            line-height: 1.5;
+        }
+        .wizard-preview strong {
+            color: var(--accent-primary);
+        }
+        .wizard-chips {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+        .wizard-chip {
+            padding: 6px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            font-size: 0.72rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-family: var(--font-sans);
+        }
+        .wizard-chip:hover {
+            border-color: var(--accent-primary);
+            color: var(--accent-primary);
+            background: rgba(0, 212, 170, 0.06);
+        }
+        .wizard-footer {
+            padding: 0 24px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
+        .wizard-footer .btn { min-width: 80px; }
+        .wizard-skip-link {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            cursor: pointer;
+            background: none;
+            border: none;
+            font-family: var(--font-sans);
+            transition: color 0.2s ease;
+        }
+        .wizard-skip-link:hover { color: var(--text-secondary); }
+        .wizard-summary {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        .wizard-summary-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            border-radius: var(--radius-md);
+            font-size: 0.8rem;
+        }
+        .wizard-summary-item .label { color: var(--text-muted); }
+        .wizard-summary-item .value {
+            font-family: var(--font-mono);
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .wizard-welcome-icon {
+            font-size: 2.2rem;
+            text-align: center;
+            margin-bottom: 8px;
+        }
+        .wizard-welcome-title {
+            text-align: center;
+            font-size: 1.25rem;
+            font-weight: 700;
+            margin-bottom: 6px;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .wizard-welcome-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 8px;
+        }
     </style>
 </head>
 <body>
@@ -741,16 +914,16 @@
 #vsel a:hover{background:#1e1e3a;color:#fff}
 #vsel .vsel-cur{color:#6fc;font-weight:600}
 </style>
-<details id="vsel"><summary>main</summary>
+<details id="vsel"><summary>dev/onboard/learn-by-doing</summary>
 <div class="vsel-dd">
 <div class="vsel-hd">current</div>
-<a href="./" class="vsel-cur">main</a>
+<a href="../../../">main</a>
 <hr class="vsel-hr">
 <div class="vsel-hd">releases</div>
-<a href="v1.6.0/">v1.6.0</a><a href="v1.5.0/">v1.5.0</a><a href="v1.4.0/">v1.4.0</a><a href="v1.3.1/">v1.3.1</a><a href="v1.3.0/">v1.3.0</a><a href="v1.2.1/">v1.2.1</a><a href="v1.2.0/">v1.2.0</a><a href="v1.1.0/">v1.1.0</a><a href="v1.0.0/">v1.0.0</a><a href="v0.1.0/">v0.1.0</a>
+<a href="../../../v1.6.0/">v1.6.0</a><a href="../../../v1.5.0/">v1.5.0</a><a href="../../../v1.4.0/">v1.4.0</a><a href="../../../v1.3.1/">v1.3.1</a><a href="../../../v1.3.0/">v1.3.0</a><a href="../../../v1.2.1/">v1.2.1</a><a href="../../../v1.2.0/">v1.2.0</a><a href="../../../v1.1.0/">v1.1.0</a><a href="../../../v1.0.0/">v1.0.0</a><a href="../../../v0.1.0/">v0.1.0</a>
 <hr class="vsel-hr">
 <div class="vsel-hd">development</div>
-<a href="dev/feature/annual-summary/">dev/feature/annual-summary</a><a href="dev/feature/combinable-filters/">dev/feature/combinable-filters</a><a href="dev/feature/expense-growth-simulator/">dev/feature/expense-growth-simulator</a><a href="dev/feature/mc-debounce/">dev/feature/mc-debounce</a><a href="dev/feature/sustainability-gauge/">dev/feature/sustainability-gauge</a><a href="dev/feature/what-if-scenarios/">dev/feature/what-if-scenarios</a><a href="dev/onboard/combo-wizard-states/">dev/onboard/combo-wizard-states</a><a href="dev/onboard/guided-walkthrough/">dev/onboard/guided-walkthrough</a><a href="dev/onboard/learn-by-doing/">dev/onboard/learn-by-doing</a><a href="dev/onboard/smart-empty-states/">dev/onboard/smart-empty-states</a>
+<a href="../../../dev/feature/annual-summary/">dev/feature/annual-summary</a><a href="../../../dev/feature/combinable-filters/">dev/feature/combinable-filters</a><a href="../../../dev/feature/expense-growth-simulator/">dev/feature/expense-growth-simulator</a><a href="../../../dev/feature/mc-debounce/">dev/feature/mc-debounce</a><a href="../../../dev/feature/sustainability-gauge/">dev/feature/sustainability-gauge</a><a href="../../../dev/feature/what-if-scenarios/">dev/feature/what-if-scenarios</a><a href="../../../dev/onboard/combo-wizard-states/">dev/onboard/combo-wizard-states</a><a href="../../../dev/onboard/guided-walkthrough/">dev/onboard/guided-walkthrough</a><a href="../../../dev/onboard/learn-by-doing/" class="vsel-cur">dev/onboard/learn-by-doing</a><a href="../../../dev/onboard/smart-empty-states/">dev/onboard/smart-empty-states</a>
 </div>
 </details>
 <!-- /version-selector -->
@@ -795,6 +968,7 @@
                     <div class="dropdown-menu" id="menuDropdown">
                         <button class="dropdown-item" id="loadExampleBtn">Load Example Data</button>
                         <button class="dropdown-item" id="toggleHelpBtn">Toggle Help</button>
+                        <button class="dropdown-item" id="setupWizardBtn">Setup Wizard</button>
                         <div class="dropdown-divider"></div>
                         <button class="dropdown-item" id="exportBtn">Export JSON</button>
                         <button class="dropdown-item" id="importBtn">Import JSON</button>

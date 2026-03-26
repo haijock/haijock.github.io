@@ -290,27 +290,6 @@ const FundFlow = {
         this.bindEvents();
         this.initChart();
         this.render();
-        this.listenForSWUpdate();
-    },
-
-    listenForSWUpdate() {
-        if (!('serviceWorker' in navigator)) return;
-        navigator.serviceWorker.ready.then((registration) => {
-            // Check for waiting worker on page load.
-            if (registration.waiting) {
-                this.showToast('Update available \u2014 refresh to get the latest version');
-            }
-            // Listen for new service workers that finish installing.
-            registration.addEventListener('updatefound', () => {
-                const newWorker = registration.installing;
-                if (!newWorker) return;
-                newWorker.addEventListener('statechange', () => {
-                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                        this.showToast('Update available \u2014 refresh to get the latest version');
-                    }
-                });
-            });
-        });
     },
 
     loadFromStorage() {

@@ -291,6 +291,12 @@ const FundFlow = {
         this.initChart();
         this.render();
         this.listenForSWUpdate();
+
+        // Guided tour: auto-start on first visit
+        if (!this.isTourCompleted()) {
+            // Small delay so the page renders first
+            setTimeout(() => this.startTour(), 400);
+        }
     },
 
     listenForSWUpdate() {
@@ -496,6 +502,10 @@ const FundFlow = {
         document.getElementById('resetBtn').addEventListener('click', () => this.resetData());
         document.getElementById('loadExampleBtn').addEventListener('click', () => this.loadExampleData());
         document.getElementById('toggleHelpBtn').addEventListener('click', () => this.toggleHelp());
+        document.getElementById('replayTourBtn').addEventListener('click', () => {
+            document.getElementById('menuDropdown').classList.remove('open');
+            this.startTour();
+        });
 
         // Pane toggle buttons
         document.querySelectorAll('.pane-toggle').forEach(btn => {
@@ -3034,6 +3044,7 @@ const FundFlow = {
         };
         this.timelineDate = new Date();
         this.saveToStorage();
+        localStorage.removeItem('fundflow_tour_completed');
         this.render();
         this.showToast('All data has been reset', 'success');
         this.updateChart();
@@ -3203,6 +3214,386 @@ const FundFlow = {
         document.body.classList.toggle('help-visible');
         const isVisible = document.body.classList.contains('help-visible');
         this.showToast(isVisible ? 'Help cards visible — click Toggle Help again to hide' : 'Help cards hidden', 'success');
+    },
+
+    // ========== GUIDED TOUR ==========
+
+    tourSteps: [
+        {
+            type: 'card',
+            title: 'Welcome to FundFlow',
+            body: 'FundFlow helps you invest a lump sum and let the returns pay for everything — laptops, subscriptions, phones — without touching your principal. Let\u2019s take a quick tour.'
+        },
+        {
+            target: '#initialPrincipal',
+            title: 'Your Principal',
+            body: 'Start by setting how much you plan to invest. This is your lump sum — the money that generates returns.'
+        },
+        {
+            target: '#returnRate',
+            title: 'Expected Return Rate',
+            body: 'Set your expected annual return. 7% is a reasonable long-term average for a global index fund.'
+        },
+        {
+            target: '.chart-card',
+            title: 'Projection Chart',
+            body: 'This chart projects your portfolio over time. Click it to pick a date — all numbers update instantly. Drag to scrub through time.'
+        },
+        {
+            target: '.chart-tabs',
+            title: 'Chart Views',
+            body: 'Switch between Projection, Breakdown, Priority Queue, and Cash Flow views to analyze your fund from different angles.'
+        },
+        {
+            target: '#addExpenseBtn',
+            title: 'Add Expenses',
+            body: 'Add things you want the fund to pay for — laptops, phones, subscriptions, anything recurring. The chart shows how long each takes to fund.'
+        },
+        {
+            target: '#addEventBtn',
+            title: 'Record Events',
+            body: 'Record deposits (money added to the fund) and rate changes here. These affect your projection.'
+        },
+        {
+            target: '.balance-display',
+            title: 'Principal Return Balance',
+            body: 'This is your gains minus all spending. Green means the fund is self-sustaining — returns cover expenses without touching principal.'
+        },
+        {
+            target: '#menuToggle',
+            title: 'Menu',
+            body: 'Export your data, load example data, toggle help cards, or replay this tour from here.'
+        },
+        {
+            type: 'card',
+            title: 'You\u2019re Ready!',
+            body: 'Add your first expense to get started, or load example data to explore a realistic scenario.'
+        }
+    ],
+
+    _tourOverlay: null,
+    _tourTooltip: null,
+    _tourCard: null,
+    _tourStep: 0,
+    _tourActive: false,
+    _tourKeyHandler: null,
+
+    isTourCompleted() {
+        return localStorage.getItem('fundflow_tour_completed') === 'true';
+    },
+
+    markTourCompleted() {
+        localStorage.setItem('fundflow_tour_completed', 'true');
+    },
+
+    startTour() {
+        this._tourStep = 0;
+        this._tourActive = true;
+
+        // Create overlay
+        if (!this._tourOverlay) {
+            this._tourOverlay = document.createElement('div');
+            this._tourOverlay.className = 'tour-overlay';
+            this._tourOverlay.addEventListener('click', (e) => {
+                if (e.target === this._tourOverlay) this.skipTour();
+            });
+            document.body.appendChild(this._tourOverlay);
+        }
+        this._tourOverlay.classList.add('active');
+
+        // Keyboard navigation
+        this._tourKeyHandler = (e) => {
+            if (!this._tourActive) return;
+            if (e.key === 'ArrowRight' || e.key === 'Enter') {
+                e.preventDefault();
+                this.nextTourStep();
+            } else if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                this.prevTourStep();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                this.skipTour();
+            }
+        };
+        document.addEventListener('keydown', this._tourKeyHandler);
+
+        this.showTourStep(0);
+    },
+
+    showTourStep(index) {
+        if (index < 0 || index >= this.tourSteps.length) return;
+        this._tourStep = index;
+        const step = this.tourSteps[index];
+
+        // Remove existing tooltip/card
+        this._removeTourElements();
+
+        if (step.type === 'card') {
+            this._showTourCard(step, index);
+        } else {
+            this._showTourSpotlight(step, index);
+        }
+    },
+
+    _removeTourElements() {
+        if (this._tourTooltip) {
+            this._tourTooltip.remove();
+            this._tourTooltip = null;
+        }
+        if (this._tourCard) {
+            this._tourCard.remove();
+            this._tourCard = null;
+        }
+        // Reset overlay shadow
+        if (this._tourOverlay) {
+            this._tourOverlay.style.boxShadow = 'none';
+            this._tourOverlay.style.background = 'rgba(0, 0, 0, 0.6)';
+        }
+    },
+
+    _showTourCard(step, index) {
+        const isWelcome = index === 0;
+        const isDone = index === this.tourSteps.length - 1;
+
+        // Dim background
+        if (this._tourOverlay) {
+            this._tourOverlay.style.background = 'rgba(0, 0, 0, 0.7)';
+            this._tourOverlay.style.boxShadow = 'none';
+        }
+
+        const card = document.createElement('div');
+        card.className = 'tour-card';
+
+        let actionsHtml = '';
+        if (isWelcome) {
+            actionsHtml = '<div class="tour-card-actions">' +
+                '<button class="tour-btn tour-btn-primary" data-tour-action="start">Take the Tour</button>' +
+                '<button class="tour-btn tour-btn-secondary" data-tour-action="example">Load Example Data Instead</button>' +
+                '<button class="tour-btn tour-btn-ghost" data-tour-action="skip">Skip &amp; Explore</button>' +
+            '</div>';
+        } else if (isDone) {
+            actionsHtml = '<div class="tour-card-actions">' +
+                '<button class="tour-btn tour-btn-primary" data-tour-action="add-expense">Add an Expense</button>' +
+                '<button class="tour-btn tour-btn-secondary" data-tour-action="example">Load Example Data</button>' +
+                '<button class="tour-btn tour-btn-ghost" data-tour-action="close">Explore on My Own</button>' +
+            '</div>';
+        }
+
+        card.innerHTML =
+            '<div class="tour-card-icon">' + (isWelcome ? '\u25C8' : '\u2713') + '</div>' +
+            '<h2>' + step.title + '</h2>' +
+            '<p>' + step.body + '</p>' +
+            actionsHtml;
+
+        document.body.appendChild(card);
+        this._tourCard = card;
+
+        // Bind card actions
+        card.querySelectorAll('[data-tour-action]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const action = e.target.dataset.tourAction;
+                if (action === 'start') {
+                    this.nextTourStep();
+                } else if (action === 'example') {
+                    this.endTour();
+                    this.loadExampleData();
+                } else if (action === 'skip' || action === 'close') {
+                    this.endTour();
+                } else if (action === 'add-expense') {
+                    this.endTour();
+                    this.openExpenseModal();
+                }
+            });
+        });
+
+        // Animate in
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                card.classList.add('visible');
+            });
+        });
+    },
+
+    _showTourSpotlight(step, index) {
+        const target = document.querySelector(step.target);
+        if (!target) {
+            // Target not found, skip to next
+            this.nextTourStep();
+            return;
+        }
+
+        // Scroll target into view
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        // Wait for scroll, then position
+        setTimeout(() => {
+            const rect = target.getBoundingClientRect();
+            const padding = 8;
+            const x = rect.left - padding;
+            const y = rect.top - padding;
+            const w = rect.width + padding * 2;
+            const h = rect.height + padding * 2;
+            const r = 8; // border-radius for the cutout
+
+            // Use box-shadow to create spotlight cutout
+            if (this._tourOverlay) {
+                this._tourOverlay.style.background = 'none';
+                this._tourOverlay.style.boxShadow =
+                    '0 0 0 9999px rgba(0, 0, 0, 0.65), ' +
+                    'inset 0 0 0 0 transparent';
+                // Use clip-path for precise rounded cutout
+                this._tourOverlay.style.clipPath =
+                    'polygon(evenodd, ' +
+                    '0% 0%, 100% 0%, 100% 100%, 0% 100%, 0% 0%, ' +
+                    (x + r) + 'px ' + y + 'px, ' +
+                    (x + w - r) + 'px ' + y + 'px, ' +
+                    (x + w) + 'px ' + (y + r) + 'px, ' +
+                    (x + w) + 'px ' + (y + h - r) + 'px, ' +
+                    (x + w - r) + 'px ' + (y + h) + 'px, ' +
+                    (x + r) + 'px ' + (y + h) + 'px, ' +
+                    x + 'px ' + (y + h - r) + 'px, ' +
+                    x + 'px ' + (y + r) + 'px, ' +
+                    (x + r) + 'px ' + y + 'px' +
+                    ')';
+            }
+
+            // Create tooltip
+            this._createTourTooltip(step, index, rect);
+        }, 300);
+    },
+
+    _createTourTooltip(step, index, targetRect) {
+        const tooltip = document.createElement('div');
+        tooltip.className = 'tour-tooltip';
+
+        // Step dots
+        let dotsHtml = '<div class="tour-steps">';
+        for (let i = 0; i < this.tourSteps.length; i++) {
+            let cls = 'tour-step-dot';
+            if (i === index) cls += ' active';
+            else if (i < index) cls += ' completed';
+            dotsHtml += '<div class="' + cls + '"></div>';
+        }
+        dotsHtml += '</div>';
+
+        // Navigation buttons
+        let navHtml = '<div class="tour-btn-row">';
+        if (index > 1) { // Step 0 is welcome card, so "Back" from step 2+
+            navHtml += '<button class="tour-btn tour-btn-secondary" data-tour-nav="prev">Back</button>';
+        }
+        if (index < this.tourSteps.length - 1) {
+            navHtml += '<button class="tour-btn tour-btn-primary" data-tour-nav="next">Next</button>';
+        }
+        navHtml += '<button class="tour-btn tour-btn-ghost" data-tour-nav="skip">Skip</button>';
+        navHtml += '</div>';
+
+        tooltip.innerHTML =
+            '<div class="tour-tooltip-title">' + step.title + '</div>' +
+            '<div class="tour-tooltip-body">' + step.body + '</div>' +
+            '<div class="tour-tooltip-footer">' + dotsHtml + navHtml + '</div>';
+
+        document.body.appendChild(tooltip);
+        this._tourTooltip = tooltip;
+
+        // Bind nav
+        tooltip.querySelectorAll('[data-tour-nav]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const action = e.target.dataset.tourNav;
+                if (action === 'next') this.nextTourStep();
+                else if (action === 'prev') this.prevTourStep();
+                else if (action === 'skip') this.skipTour();
+            });
+        });
+
+        // Position tooltip: prefer below target, flip to above if not enough space
+        const isMobile = window.innerWidth <= 700;
+        if (!isMobile) {
+            requestAnimationFrame(() => {
+                const ttRect = tooltip.getBoundingClientRect();
+                const viewH = window.innerHeight;
+                const viewW = window.innerWidth;
+                const gap = 12;
+
+                let top, left;
+
+                // Try below
+                if (targetRect.bottom + gap + ttRect.height < viewH) {
+                    top = targetRect.bottom + gap;
+                }
+                // Try above
+                else if (targetRect.top - gap - ttRect.height > 0) {
+                    top = targetRect.top - gap - ttRect.height;
+                }
+                // Fallback: center vertically
+                else {
+                    top = Math.max(8, (viewH - ttRect.height) / 2);
+                }
+
+                // Horizontal: align left with target, clamp to viewport
+                left = targetRect.left;
+                if (left + ttRect.width > viewW - 16) {
+                    left = viewW - ttRect.width - 16;
+                }
+                if (left < 16) left = 16;
+
+                tooltip.style.top = top + 'px';
+                tooltip.style.left = left + 'px';
+
+                requestAnimationFrame(() => {
+                    tooltip.classList.add('visible');
+                });
+            });
+        } else {
+            // Mobile: bottom sheet style (CSS handles positioning)
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    tooltip.classList.add('visible');
+                });
+            });
+        }
+    },
+
+    nextTourStep() {
+        if (this._tourStep < this.tourSteps.length - 1) {
+            this.showTourStep(this._tourStep + 1);
+        } else {
+            this.endTour();
+        }
+    },
+
+    prevTourStep() {
+        if (this._tourStep > 0) {
+            this.showTourStep(this._tourStep - 1);
+        }
+    },
+
+    skipTour() {
+        this.endTour();
+        this.showToast('Tour skipped \u2014 replay anytime from the menu');
+    },
+
+    endTour() {
+        this._tourActive = false;
+        this._removeTourElements();
+
+        if (this._tourOverlay) {
+            this._tourOverlay.classList.remove('active');
+            this._tourOverlay.style.boxShadow = 'none';
+            this._tourOverlay.style.background = '';
+            this._tourOverlay.style.clipPath = '';
+        }
+
+        if (this._tourKeyHandler) {
+            document.removeEventListener('keydown', this._tourKeyHandler);
+            this._tourKeyHandler = null;
+        }
+
+        this.markTourCompleted();
+
+        // Auto-enable help cards after tour
+        if (!document.body.classList.contains('help-visible')) {
+            document.body.classList.add('help-visible');
+        }
     },
 
     // ========== UTILS ==========

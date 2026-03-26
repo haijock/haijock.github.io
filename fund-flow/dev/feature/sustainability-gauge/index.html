@@ -337,6 +337,40 @@
         .milestone-tooltip strong { color: var(--text-primary); }
         .milestone-row:hover .milestone-tooltip { display: block; }
 
+        /* ========== SUSTAINABILITY GAUGE ========== */
+        .gauge-container {
+            display: flex; flex-direction: column; align-items: center;
+            justify-content: center; height: 200px; position: relative;
+        }
+        .gauge-svg { overflow: visible; }
+        .gauge-value {
+            font-size: 2.5rem; font-weight: 700; font-family: var(--font-mono);
+            fill: var(--text-primary);
+        }
+        .gauge-label {
+            font-size: 0.7rem; fill: var(--text-muted);
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .gauge-trend {
+            display: flex; align-items: center; justify-content: center;
+            gap: 6px; padding: 6px 0 10px;
+            font-size: 0.75rem; font-weight: 500;
+        }
+        .gauge-trend .arrow { font-size: 1rem; line-height: 1; }
+        .gauge-trend.up { color: var(--accent-success); }
+        .gauge-trend.down { color: var(--accent-danger); }
+        .gauge-trend.flat { color: var(--text-muted); }
+        .gauge-summary {
+            display: flex; justify-content: center; gap: 24px;
+            font-size: 0.72rem; color: var(--text-secondary);
+            font-family: var(--font-mono); flex-wrap: wrap;
+        }
+        .gauge-summary-item { white-space: nowrap; }
+        .gauge-summary-label {
+            color: var(--text-muted); font-family: var(--font-sans);
+            font-size: 0.65rem; margin-right: 4px;
+        }
+
         /* Contextual help system */
         .help-card {
             display: none;
@@ -741,16 +775,16 @@
 #vsel a:hover{background:#1e1e3a;color:#fff}
 #vsel .vsel-cur{color:#6fc;font-weight:600}
 </style>
-<details id="vsel"><summary>main</summary>
+<details id="vsel"><summary>dev/feature/sustainability-gauge</summary>
 <div class="vsel-dd">
 <div class="vsel-hd">current</div>
-<a href="./" class="vsel-cur">main</a>
+<a href="../../../">main</a>
 <hr class="vsel-hr">
 <div class="vsel-hd">releases</div>
-<a href="v1.6.0/">v1.6.0</a><a href="v1.5.0/">v1.5.0</a><a href="v1.4.0/">v1.4.0</a><a href="v1.3.1/">v1.3.1</a><a href="v1.3.0/">v1.3.0</a><a href="v1.2.1/">v1.2.1</a><a href="v1.2.0/">v1.2.0</a><a href="v1.1.0/">v1.1.0</a><a href="v1.0.0/">v1.0.0</a><a href="v0.1.0/">v0.1.0</a>
+<a href="../../../v1.6.0/">v1.6.0</a><a href="../../../v1.5.0/">v1.5.0</a><a href="../../../v1.4.0/">v1.4.0</a><a href="../../../v1.3.1/">v1.3.1</a><a href="../../../v1.3.0/">v1.3.0</a><a href="../../../v1.2.1/">v1.2.1</a><a href="../../../v1.2.0/">v1.2.0</a><a href="../../../v1.1.0/">v1.1.0</a><a href="../../../v1.0.0/">v1.0.0</a><a href="../../../v0.1.0/">v0.1.0</a>
 <hr class="vsel-hr">
 <div class="vsel-hd">development</div>
-<a href="dev/feature/annual-summary/">dev/feature/annual-summary</a><a href="dev/feature/combinable-filters/">dev/feature/combinable-filters</a><a href="dev/feature/expense-growth-simulator/">dev/feature/expense-growth-simulator</a><a href="dev/feature/mc-debounce/">dev/feature/mc-debounce</a><a href="dev/feature/sustainability-gauge/">dev/feature/sustainability-gauge</a><a href="dev/feature/what-if-scenarios/">dev/feature/what-if-scenarios</a><a href="dev/onboard/combo-wizard-states/">dev/onboard/combo-wizard-states</a><a href="dev/onboard/guided-walkthrough/">dev/onboard/guided-walkthrough</a><a href="dev/onboard/learn-by-doing/">dev/onboard/learn-by-doing</a><a href="dev/onboard/smart-empty-states/">dev/onboard/smart-empty-states</a>
+<a href="../../../dev/feature/annual-summary/">dev/feature/annual-summary</a><a href="../../../dev/feature/combinable-filters/">dev/feature/combinable-filters</a><a href="../../../dev/feature/expense-growth-simulator/">dev/feature/expense-growth-simulator</a><a href="../../../dev/feature/mc-debounce/">dev/feature/mc-debounce</a><a href="../../../dev/feature/sustainability-gauge/" class="vsel-cur">dev/feature/sustainability-gauge</a><a href="../../../dev/feature/what-if-scenarios/">dev/feature/what-if-scenarios</a><a href="../../../dev/onboard/combo-wizard-states/">dev/onboard/combo-wizard-states</a><a href="../../../dev/onboard/guided-walkthrough/">dev/onboard/guided-walkthrough</a><a href="../../../dev/onboard/learn-by-doing/">dev/onboard/learn-by-doing</a><a href="../../../dev/onboard/smart-empty-states/">dev/onboard/smart-empty-states</a>
 </div>
 </details>
 <!-- /version-selector -->
@@ -839,6 +873,7 @@
             <button class="pane-toggle" data-pane="priority">Priority</button>
             <button class="pane-toggle" data-pane="cashflow">Cash Flow</button>
             <button class="pane-toggle" data-pane="milestones">Milestones</button>
+            <button class="pane-toggle" data-pane="sustainability">Sustainability</button>
         </div>
 
         <!-- ===== BREAKDOWN PANE ===== -->
@@ -893,6 +928,16 @@
                 </div>
             </div>
             <div id="milestonesView" style="overflow-y: auto; max-height: 400px; padding: 8px 0;"></div>
+        </div>
+
+        <!-- ===== SUSTAINABILITY PANE ===== -->
+        <div class="chart-card pane-card" id="sustainabilityPane" style="display: none;">
+            <div class="chart-header">
+                <div class="chart-header-left">
+                    <span class="card-title">Sustainability</span>
+                </div>
+            </div>
+            <div id="sustainabilityView" style="padding: 8px 0;"></div>
         </div>
 
         <!-- ===== UNIFIED LIST ===== -->

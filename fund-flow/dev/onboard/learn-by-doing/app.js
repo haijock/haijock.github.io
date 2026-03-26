@@ -311,6 +311,11 @@ const FundFlow = {
                 });
             });
         });
+
+        // Auto-start wizard on first visit if no data and wizard not previously completed
+        if (!this.isWizardCompleted() && this.data.expenses.length === 0 && this.data.events.length === 0) {
+            setTimeout(() => this.startWizard(), 400);
+        }
     },
 
     loadFromStorage() {
@@ -496,6 +501,7 @@ const FundFlow = {
         document.getElementById('resetBtn').addEventListener('click', () => this.resetData());
         document.getElementById('loadExampleBtn').addEventListener('click', () => this.loadExampleData());
         document.getElementById('toggleHelpBtn').addEventListener('click', () => this.toggleHelp());
+        document.getElementById('setupWizardBtn').addEventListener('click', () => this.startWizard());
 
         // Pane toggle buttons
         document.querySelectorAll('.pane-toggle').forEach(btn => {
@@ -3034,6 +3040,7 @@ const FundFlow = {
         };
         this.timelineDate = new Date();
         this.saveToStorage();
+        localStorage.removeItem('fundflow_wizard_completed');
         this.render();
         this.showToast('All data has been reset', 'success');
         this.updateChart();
@@ -3203,6 +3210,534 @@ const FundFlow = {
         document.body.classList.toggle('help-visible');
         const isVisible = document.body.classList.contains('help-visible');
         this.showToast(isVisible ? 'Help cards visible — click Toggle Help again to hide' : 'Help cards hidden', 'success');
+    },
+
+    // ========== SETUP WIZARD ==========
+
+    isWizardCompleted() {
+        return localStorage.getItem('fundflow_wizard_completed') === '1';
+    },
+
+    markWizardCompleted() {
+        localStorage.setItem('fundflow_wizard_completed', '1');
+    },
+
+    _wizardStepIndex: 0,
+
+    _wizardSteps: [
+        { key: 'welcome', title: 'Welcome to FundFlow', label: 'Welcome' },
+        { key: 'investment', title: 'Your Investment', label: 'Investment' },
+        { key: 'capex', title: 'Add a Big Purchase', label: 'CapEx' },
+        { key: 'opex', title: 'Add a Subscription', label: 'OpEx' },
+        { key: 'done', title: "You're All Set!", label: 'Done' }
+    ],
+
+    startWizard() {
+        // Close dropdown menu if open
+        const menu = document.getElementById('menuDropdown');
+        if (menu) menu.classList.remove('open');
+
+        // Warn if user already has data
+        if (this.data.expenses.length > 0 || this.data.events.length > 1) {
+            if (!confirm('Starting the wizard will reset your current data. Continue?')) return;
+            this.data = {
+                settings: {
+                    initialPrincipal: 135000,
+                    accountType: 'isk',
+                    fundStartDate: new Date().toISOString().split('T')[0],
+                    redistributeFullyFunded: true
+                },
+                expenses: [],
+                events: []
+            };
+            this.timelineDate = new Date();
+            this.saveToStorage();
+            this.loadFromStorage();
+            this.render();
+            this.updateChart();
+        }
+
+        this._wizardStepIndex = 0;
+
+        // Remove any existing wizard overlay
+        const existing = document.querySelector('.wizard-overlay');
+        if (existing) existing.remove();
+
+        // Create overlay
+        const overlay = document.createElement('div');
+        overlay.className = 'wizard-overlay';
+        overlay.id = 'wizardOverlay';
+        overlay.innerHTML = '<div class="wizard-card" id="wizardCard"></div>';
+
+        // Click overlay backdrop to dismiss (keeps entered data)
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) this.endWizard(false);
+        });
+
+        document.body.appendChild(overlay);
+
+        // Open with animation
+        requestAnimationFrame(() => overlay.classList.add('open'));
+
+        // Keyboard navigation
+        this._wizardKeyHandler = (e) => {
+            if (e.key === 'Escape') this.endWizard(false);
+        };
+        document.addEventListener('keydown', this._wizardKeyHandler);
+
+        this.showWizardStep(0);
+    },
+
+    showWizardStep(index) {
+        this._wizardStepIndex = index;
+        const card = document.getElementById('wizardCard');
+        if (!card) return;
+
+        const step = this._wizardSteps[index];
+
+        // Build step indicator dots
+        const dots = this._wizardSteps.map((s, i) => {
+            const cls = i === index ? 'active' : (i < index ? 'completed' : '');
+            return `<span class="wizard-dot ${cls}"></span>`;
+        }).join('');
+        const stepLabel = `Step ${index + 1} of ${this._wizardSteps.length}`;
+
+        let headerHtml = '';
+        if (step.key !== 'welcome') {
+            headerHtml = `
+                <div class="wizard-header">
+                    <div class="wizard-step-indicator">
+                        ${dots}
+                        <span class="wizard-step-label">${stepLabel}</span>
+                    </div>
+                    <div class="wizard-title">${step.title}</div>
+                </div>`;
+        }
+
+        let bodyHtml = '';
+        switch (step.key) {
+            case 'welcome': bodyHtml = this._renderWizardWelcome(); break;
+            case 'investment': bodyHtml = this._renderWizardInvestment(); break;
+            case 'capex': bodyHtml = this._renderWizardCapEx(); break;
+            case 'opex': bodyHtml = this._renderWizardOpEx(); break;
+            case 'done': bodyHtml = this._renderWizardDone(); break;
+        }
+
+        card.innerHTML = headerHtml + bodyHtml;
+
+        // Bind step-specific event listeners
+        this._bindWizardStepEvents(step.key);
+    },
+
+    _renderWizardWelcome() {
+        return `
+            <div class="wizard-body" style="padding-top: 24px;">
+                <div class="wizard-welcome-icon">\u{1F4CA}</div>
+                <div class="wizard-welcome-title">FundFlow</div>
+                <p class="wizard-desc" style="text-align: center;">
+                    Invest a lump sum and let the returns pay for your expenses.
+                    Let\u2019s set up your fund in 4 quick steps.
+                </p>
+                <div class="wizard-welcome-actions">
+                    <button class="btn btn-primary" id="wizardLetsGo" style="width: 100%;">Let\u2019s go</button>
+                    <button class="btn" id="wizardSkipExample" style="width: 100%;">Skip \u2014 load example data</button>
+                    <button class="wizard-skip-link" id="wizardSkipEmpty" style="width: 100%; text-align: center; padding: 8px 0;">
+                        Skip \u2014 explore empty
+                    </button>
+                </div>
+            </div>`;
+    },
+
+    _renderWizardInvestment() {
+        const principal = this.data.settings.initialPrincipal || 100000;
+        const rate = this.getCurrentRate() * 100;
+        const monthlyGain = Math.round(principal * (rate / 100) / 12);
+        return `
+            <p class="wizard-desc">How much are you investing, and what annual return do you expect?</p>
+            <div class="wizard-body">
+                <div class="wizard-preview" id="wizardInvestPreview">
+                    At <strong>${rate.toFixed(1)}%</strong>, <strong>${this.formatNumber(principal)} SEK</strong> generates ~<strong>${this.formatNumber(monthlyGain)} SEK/month</strong> in gains.
+                </div>
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label class="form-label">Principal (SEK)</label>
+                    <input type="number" class="form-input" id="wizardPrincipal" value="${principal}" min="0" step="10000">
+                </div>
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label class="form-label">Expected annual return (%)</label>
+                    <input type="range" id="wizardRate" min="1" max="20" step="0.5" value="${rate}" style="width: 100%;">
+                    <div style="text-align: right; font-size: 0.78rem; color: var(--text-secondary);" id="wizardRateLabel">${rate.toFixed(1)}%</div>
+                </div>
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label class="form-label">Account type</label>
+                    <select class="form-input" id="wizardAccountType">
+                        <option value="isk" ${this.data.settings.accountType === 'isk' ? 'selected' : ''}>ISK (Investment Savings Account)</option>
+                        <option value="kf" ${this.data.settings.accountType === 'kf' ? 'selected' : ''}>KF (Capital Insurance)</option>
+                        <option value="af" ${this.data.settings.accountType === 'af' ? 'selected' : ''}>AF (Stock Account)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="wizard-footer">
+                <button class="wizard-skip-link" id="wizardBackBtn">Back</button>
+                <button class="btn btn-primary" id="wizardNextBtn">Next</button>
+            </div>`;
+    },
+
+    _renderWizardCapEx() {
+        return `
+            <p class="wizard-desc">What\u2019s something expensive you replace every few years? A laptop, a phone, furniture?</p>
+            <div class="wizard-body">
+                <div class="wizard-chips" id="wizardCapExChips">
+                    <button class="wizard-chip" data-name="Laptop" data-cost="30000" data-interval="4">Laptop 30k / 4yr</button>
+                    <button class="wizard-chip" data-name="Phone" data-cost="15000" data-interval="3">Phone 15k / 3yr</button>
+                    <button class="wizard-chip" data-name="Monitor" data-cost="12000" data-interval="6">Monitor 12k / 6yr</button>
+                    <button class="wizard-chip" data-name="Headphones" data-cost="5000" data-interval="4">Headphones 5k / 4yr</button>
+                </div>
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label class="form-label">Item name</label>
+                    <input type="text" class="form-input" id="wizardCapExName" placeholder="e.g. Laptop">
+                </div>
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label class="form-label">Cost (SEK)</label>
+                    <input type="number" class="form-input" id="wizardCapExCost" placeholder="30000" min="0">
+                </div>
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label class="form-label">Replace every (years)</label>
+                    <input type="number" class="form-input" id="wizardCapExInterval" value="4" min="1" max="20">
+                </div>
+            </div>
+            <div class="wizard-footer">
+                <button class="wizard-skip-link" id="wizardBackBtn">Back</button>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button class="wizard-skip-link" id="wizardSkipStepBtn">Skip this step</button>
+                    <button class="btn btn-primary" id="wizardNextBtn">Next</button>
+                </div>
+            </div>`;
+    },
+
+    _renderWizardOpEx() {
+        return `
+            <p class="wizard-desc">What\u2019s a recurring cost you pay monthly or yearly? Hosting, software, a streaming service?</p>
+            <div class="wizard-body">
+                <div class="wizard-chips" id="wizardOpExChips">
+                    <button class="wizard-chip" data-name="Cloud Hosting" data-cost="200" data-cycle="monthly">Hosting 200/mo</button>
+                    <button class="wizard-chip" data-name="Software License" data-cost="1200" data-cycle="yearly">Software 1,200/yr</button>
+                    <button class="wizard-chip" data-name="Streaming" data-cost="150" data-cycle="monthly">Streaming 150/mo</button>
+                </div>
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label class="form-label">Service name</label>
+                    <input type="text" class="form-input" id="wizardOpExName" placeholder="e.g. Cloud Hosting">
+                </div>
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label class="form-label">Cost (SEK)</label>
+                    <input type="number" class="form-input" id="wizardOpExCost" placeholder="200" min="0">
+                </div>
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label class="form-label">Billing cycle</label>
+                    <select class="form-input" id="wizardOpExCycle">
+                        <option value="monthly">Monthly</option>
+                        <option value="yearly">Yearly</option>
+                    </select>
+                </div>
+            </div>
+            <div class="wizard-footer">
+                <button class="wizard-skip-link" id="wizardBackBtn">Back</button>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button class="wizard-skip-link" id="wizardSkipStepBtn">Skip this step</button>
+                    <button class="btn btn-primary" id="wizardNextBtn">Next</button>
+                </div>
+            </div>`;
+    },
+
+    _renderWizardDone() {
+        const principal = this.data.settings.initialPrincipal;
+        const rate = this.getCurrentRate();
+        const monthlyGain = Math.round(principal * rate / 12);
+
+        // Calculate total annual expense cost
+        let annualCost = 0;
+        this.data.expenses.forEach(exp => {
+            if (exp.type === 'opex') {
+                annualCost += exp.billingCycle === 'monthly' ? exp.cost * 12 : exp.cost;
+            } else {
+                annualCost += exp.cost / (exp.interval || 1);
+            }
+        });
+
+        const annualGain = principal * rate;
+        const isSustainable = annualGain >= annualCost;
+        const statusText = isSustainable
+            ? '\u2705 Your fund is self-sustaining!'
+            : '\u26A0\uFE0F You may need more principal to cover all expenses.';
+
+        return `
+            <div class="wizard-header">
+                <div class="wizard-step-indicator">
+                    ${this._wizardSteps.map((s, i) => `<span class="wizard-dot ${i === this._wizardStepIndex ? 'active' : 'completed'}"></span>`).join('')}
+                    <span class="wizard-step-label">Done</span>
+                </div>
+                <div class="wizard-title">You\u2019re All Set!</div>
+            </div>
+            <p class="wizard-desc">Your fund is set up. Here\u2019s where you stand.</p>
+            <div class="wizard-body">
+                <div class="wizard-summary">
+                    <div class="wizard-summary-item">
+                        <span class="label">Principal</span>
+                        <span class="value">${this.formatNumber(principal)} SEK</span>
+                    </div>
+                    <div class="wizard-summary-item">
+                        <span class="label">Monthly gains</span>
+                        <span class="value">~${this.formatNumber(monthlyGain)} SEK/mo</span>
+                    </div>
+                    <div class="wizard-summary-item">
+                        <span class="label">Expenses</span>
+                        <span class="value">${this.data.expenses.length} items \u2014 ${this.formatNumber(Math.round(annualCost))} SEK/yr</span>
+                    </div>
+                    <div class="wizard-summary-item">
+                        <span class="label">Status</span>
+                        <span class="value">${statusText}</span>
+                    </div>
+                </div>
+                <div class="wizard-welcome-actions">
+                    <button class="btn btn-primary" id="wizardFinishExplore" style="width: 100%;">Explore the app</button>
+                    <button class="btn" id="wizardFinishAddMore" style="width: 100%;">Add more expenses</button>
+                    <button class="wizard-skip-link" id="wizardFinishHelp" style="width: 100%; text-align: center; padding: 8px 0;">
+                        Enable help cards
+                    </button>
+                </div>
+            </div>`;
+    },
+
+    _bindWizardStepEvents(stepKey) {
+        switch (stepKey) {
+            case 'welcome':
+                document.getElementById('wizardLetsGo')?.addEventListener('click', () => {
+                    this.showWizardStep(1);
+                });
+                document.getElementById('wizardSkipExample')?.addEventListener('click', () => {
+                    this.endWizard(false);
+                    this.loadExampleData();
+                    this.markWizardCompleted();
+                });
+                document.getElementById('wizardSkipEmpty')?.addEventListener('click', () => {
+                    this.endWizard(true);
+                });
+                break;
+
+            case 'investment':
+                this._bindWizardInvestmentListeners();
+                document.getElementById('wizardBackBtn')?.addEventListener('click', () => this.showWizardStep(0));
+                document.getElementById('wizardNextBtn')?.addEventListener('click', () => this._wizardSaveInvestment());
+                break;
+
+            case 'capex':
+                // Quick-fill chips
+                document.querySelectorAll('#wizardCapExChips .wizard-chip').forEach(chip => {
+                    chip.addEventListener('click', () => {
+                        document.getElementById('wizardCapExName').value = chip.dataset.name;
+                        document.getElementById('wizardCapExCost').value = chip.dataset.cost;
+                        document.getElementById('wizardCapExInterval').value = chip.dataset.interval;
+                    });
+                });
+                document.getElementById('wizardBackBtn')?.addEventListener('click', () => this.showWizardStep(1));
+                document.getElementById('wizardNextBtn')?.addEventListener('click', () => this._wizardSaveCapEx());
+                document.getElementById('wizardSkipStepBtn')?.addEventListener('click', () => this.showWizardStep(3));
+                break;
+
+            case 'opex':
+                // Quick-fill chips
+                document.querySelectorAll('#wizardOpExChips .wizard-chip').forEach(chip => {
+                    chip.addEventListener('click', () => {
+                        document.getElementById('wizardOpExName').value = chip.dataset.name;
+                        document.getElementById('wizardOpExCost').value = chip.dataset.cost;
+                        document.getElementById('wizardOpExCycle').value = chip.dataset.cycle;
+                    });
+                });
+                document.getElementById('wizardBackBtn')?.addEventListener('click', () => this.showWizardStep(2));
+                document.getElementById('wizardNextBtn')?.addEventListener('click', () => this._wizardSaveOpEx());
+                document.getElementById('wizardSkipStepBtn')?.addEventListener('click', () => this.showWizardStep(4));
+                break;
+
+            case 'done':
+                document.getElementById('wizardFinishExplore')?.addEventListener('click', () => this.endWizard(true));
+                document.getElementById('wizardFinishAddMore')?.addEventListener('click', () => {
+                    this.endWizard(true);
+                    this.openExpenseModal();
+                });
+                document.getElementById('wizardFinishHelp')?.addEventListener('click', () => {
+                    this.endWizard(true);
+                    this.toggleHelp();
+                });
+                break;
+        }
+    },
+
+    _bindWizardInvestmentListeners() {
+        const principalInput = document.getElementById('wizardPrincipal');
+        const rateInput = document.getElementById('wizardRate');
+        const rateLabel = document.getElementById('wizardRateLabel');
+        const preview = document.getElementById('wizardInvestPreview');
+
+        const updatePreview = () => {
+            const p = parseFloat(principalInput.value) || 0;
+            const r = parseFloat(rateInput.value) || 7;
+            const monthly = Math.round(p * (r / 100) / 12);
+            rateLabel.textContent = r.toFixed(1) + '%';
+            preview.innerHTML = `At <strong>${r.toFixed(1)}%</strong>, <strong>${this.formatNumber(p)} SEK</strong> generates ~<strong>${this.formatNumber(monthly)} SEK/month</strong> in gains.`;
+
+            // Live-update the app behind the wizard
+            this.data.settings.initialPrincipal = p;
+            this.saveToStorage();
+            this.render();
+            this.updateChart();
+        };
+
+        principalInput?.addEventListener('input', updatePreview);
+        rateInput?.addEventListener('input', updatePreview);
+    },
+
+    _wizardSaveInvestment() {
+        const principal = parseFloat(document.getElementById('wizardPrincipal').value) || 0;
+        const rate = parseFloat(document.getElementById('wizardRate').value) / 100;
+        const accountType = document.getElementById('wizardAccountType').value;
+
+        if (principal <= 0) {
+            document.getElementById('wizardPrincipal').style.borderColor = 'var(--accent-danger)';
+            return;
+        }
+
+        // Save settings
+        this.data.settings.initialPrincipal = principal;
+        this.data.settings.accountType = accountType;
+
+        // Create initial deposit event
+        const today = new Date().toISOString().split('T')[0];
+        this.data.settings.fundStartDate = today;
+        const existingDeposit = this.data.events.find(ev => ev.type === 'deposit' && ev.isInitial);
+        if (existingDeposit) {
+            existingDeposit.amount = principal;
+            existingDeposit.date = today;
+        } else {
+            this.data.events.push({
+                id: this.generateId(),
+                type: 'deposit',
+                date: today,
+                amount: principal,
+                isInitial: true,
+                createdAt: new Date().toISOString()
+            });
+        }
+
+        // Set rate
+        this.addOrUpdateRateChange(rate);
+
+        this.saveToStorage();
+        this.render();
+        this.updateChart();
+        this.showWizardStep(2);
+    },
+
+    _wizardSaveCapEx() {
+        const name = document.getElementById('wizardCapExName').value.trim();
+        const cost = parseFloat(document.getElementById('wizardCapExCost').value);
+        const interval = parseFloat(document.getElementById('wizardCapExInterval').value) || 4;
+
+        if (!name || isNaN(cost) || cost <= 0) {
+            // Highlight empty fields gently
+            if (!name) document.getElementById('wizardCapExName').style.borderColor = 'var(--accent-danger)';
+            if (isNaN(cost) || cost <= 0) document.getElementById('wizardCapExCost').style.borderColor = 'var(--accent-danger)';
+            return;
+        }
+
+        const today = new Date().toISOString().split('T')[0];
+        const newExpense = {
+            id: this.generateId(),
+            type: 'capex',
+            name: name,
+            cost: cost,
+            interval: interval,
+            billingCycle: null,
+            lastProcurementDate: today
+        };
+        this.data.expenses.push(newExpense);
+        this.data.events.push({
+            id: this.generateId(),
+            type: 'expense_create',
+            date: today,
+            expenseId: newExpense.id,
+            name: name,
+            expenseType: 'capex',
+            cost: cost,
+            interval: interval,
+            billingCycle: null,
+            lastProcurementDate: today,
+            createdAt: new Date().toISOString()
+        });
+
+        this.saveToStorage();
+        this.render();
+        this.updateChart();
+        this.showWizardStep(3);
+    },
+
+    _wizardSaveOpEx() {
+        const name = document.getElementById('wizardOpExName').value.trim();
+        const cost = parseFloat(document.getElementById('wizardOpExCost').value);
+        const cycle = document.getElementById('wizardOpExCycle').value;
+
+        if (!name || isNaN(cost) || cost <= 0) {
+            if (!name) document.getElementById('wizardOpExName').style.borderColor = 'var(--accent-danger)';
+            if (isNaN(cost) || cost <= 0) document.getElementById('wizardOpExCost').style.borderColor = 'var(--accent-danger)';
+            return;
+        }
+
+        const today = new Date().toISOString().split('T')[0];
+        const newExpense = {
+            id: this.generateId(),
+            type: 'opex',
+            name: name,
+            cost: cost,
+            interval: 1,
+            billingCycle: cycle,
+            lastProcurementDate: today
+        };
+        this.data.expenses.push(newExpense);
+        this.data.events.push({
+            id: this.generateId(),
+            type: 'expense_create',
+            date: today,
+            expenseId: newExpense.id,
+            name: name,
+            expenseType: 'opex',
+            cost: cost,
+            interval: 1,
+            billingCycle: cycle,
+            lastProcurementDate: today,
+            createdAt: new Date().toISOString()
+        });
+
+        this.saveToStorage();
+        this.render();
+        this.updateChart();
+        this.showWizardStep(4);
+    },
+
+    endWizard(markComplete) {
+        const overlay = document.getElementById('wizardOverlay');
+        if (overlay) {
+            overlay.classList.remove('open');
+            setTimeout(() => overlay.remove(), 300);
+        }
+
+        // Remove keyboard handler
+        if (this._wizardKeyHandler) {
+            document.removeEventListener('keydown', this._wizardKeyHandler);
+            this._wizardKeyHandler = null;
+        }
+
+        if (markComplete) {
+            this.markWizardCompleted();
+            this.showToast('Setup complete \u2014 your fund is ready!', 'success');
+        }
     },
 
     // ========== UTILS ==========

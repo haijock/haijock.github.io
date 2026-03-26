@@ -275,13 +275,14 @@ const FundFlow = {
 
     chart: null,
     breakdownChart: null,
-    visiblePanes: { breakdown: false, priority: false, cashflow: false, milestones: false },
+    visiblePanes: { breakdown: false, priority: false, cashflow: false, milestones: false, whatif: false },
     priorityMode: 'full', // 'full' or 'compact'
     timelineDate: new Date(),
     editingEventId: null,
     editingExpenseId: null,
     activeFilter: 'all',
     _renderTimer: null,
+    scenarioState: { active: false, addedExpenses: [], removedExpenseIds: [], rateOverride: null, addedDeposits: [] },
 
     // ========== INIT ==========
 
@@ -619,6 +620,7 @@ const FundFlow = {
         if (this.visiblePanes.priority) this._renderPriorityPane();
         if (this.visiblePanes.cashflow) this._renderCashFlowPane();
         if (this.visiblePanes.milestones) this._renderMilestonesPane();
+        if (this.visiblePanes.whatif && this.scenarioState.active) this._refreshWhatIfDelta();
     },
 
     resetToToday() {
@@ -1980,6 +1982,11 @@ const FundFlow = {
         this.chart = new Chart(ctx, this.getChartConfig('projection'));
         this._restoreTimelineBar();
 
+        // Re-add scenario overlay if active
+        if (this.scenarioState.active && this._scenarioProjections) {
+            this._addScenarioDataset(this._scenarioProjections);
+        }
+
         // Refresh all visible panes
         this._refreshVisiblePanes();
     },
@@ -1994,7 +2001,7 @@ const FundFlow = {
         });
 
         // Show/hide pane card
-        const paneIds = { breakdown: 'breakdownPane', priority: 'priorityPane', cashflow: 'cashflowPane', milestones: 'milestonesPane' };
+        const paneIds = { breakdown: 'breakdownPane', priority: 'priorityPane', cashflow: 'cashflowPane', milestones: 'milestonesPane', whatif: 'whatifPane' };
         const card = document.getElementById(paneIds[pane]);
         if (card) card.style.display = this.visiblePanes[pane] ? '' : 'none';
 
@@ -2004,12 +2011,15 @@ const FundFlow = {
             else if (pane === 'priority') this._renderPriorityPane();
             else if (pane === 'cashflow') this._renderCashFlowPane();
             else if (pane === 'milestones') this._renderMilestonesPane();
+            else if (pane === 'whatif') this._renderWhatIfPane();
         } else {
             // Destroy breakdown chart when hiding to free resources
             if (pane === 'breakdown' && this.breakdownChart) {
                 this.breakdownChart.destroy();
                 this.breakdownChart = null;
             }
+            // Clear scenario overlay when hiding what-if pane
+            if (pane === 'whatif') this._clearScenario();
         }
     },
 
@@ -2294,6 +2304,377 @@ const FundFlow = {
                 '<span style="font-size: 0.65rem; color: var(--text-muted); min-width: 32px; text-align: right;">' + pct + '%</span>' +
             '</div>';
         }).join('');
+    },
+
+    // ========== WHAT-IF SCENARIO PANE ==========
+
+    _renderWhatIfPane() {
+        const pane = document.getElementById('whatifPane');
+        if (!pane) return;
+
+        // Populate the remove-expense dropdown with current expenses
+        const removeSelect = document.getElementById('whatifExpenseRemoveSelect');
+        if (removeSelect) {
+            const current = removeSelect.value;
+            removeSelect.innerHTML = '<option value="">-- Select expense --</option>' +
+                this.data.expenses.map(e =>
+                    '<option value="' + e.id + '"' + (e.id === current ? ' selected' : '') + '>' +
+                    e.name + ' (' + e.type + ', ' + this.formatNumber(e.type === 'opex' ? e.cost * (e.billingCycle === 'monthly' ? 12 : 1) : Math.round(e.cost / (e.interval || 1))) + ' SEK/yr)</option>'
+                ).join('');
+        }
+
+        // Set default deposit date to today if empty
+        const depositDate = document.getElementById('whatifDepositDate');
+        if (depositDate && !depositDate.value) {
+            depositDate.value = new Date().toISOString().split('T')[0];
+        }
+
+        // Set rate slider to current rate if not yet touched
+        const rateSlider = document.getElementById('whatifRate');
+        const rateLabel = document.getElementById('whatifRateValue');
+        if (rateSlider && !rateSlider.dataset.touched) {
+            // Find current effective rate
+            const proj = this.project(this.timelineDate);
+            const currentRate = proj.rate || 0.07;
+            rateSlider.value = (currentRate * 100).toFixed(1);
+            if (rateLabel) rateLabel.textContent = (currentRate * 100).toFixed(1) + '%';
+        }
+
+        // Bind events (idempotent — uses data attribute to avoid re-binding)
+        if (!pane.dataset.bound) {
+            pane.dataset.bound = '1';
+
+            // Section enable/disable toggles
+            document.getElementById('whatifExpenseEnabled').addEventListener('change', (e) => {
+                document.getElementById('whatifExpenseFields').style.display = e.target.checked ? '' : 'none';
+            });
+            document.getElementById('whatifRateEnabled').addEventListener('change', (e) => {
+                document.getElementById('whatifRateFields').style.display = e.target.checked ? '' : 'none';
+            });
+            document.getElementById('whatifDepositEnabled').addEventListener('change', (e) => {
+                document.getElementById('whatifDepositFields').style.display = e.target.checked ? '' : 'none';
+            });
+
+            // Add/Remove expense mode toggle
+            document.querySelectorAll('[data-whatif-expense-mode]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('[data-whatif-expense-mode]').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    const mode = btn.dataset.whatifExpenseMode;
+                    document.getElementById('whatifExpenseAddFields').style.display = mode === 'add' ? '' : 'none';
+                    document.getElementById('whatifExpenseRemoveFields').style.display = mode === 'remove' ? '' : 'none';
+                });
+            });
+
+            // CapEx/OpEx type toggle
+            document.querySelectorAll('[data-whatif-type]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('[data-whatif-type]').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                });
+            });
+
+            // Rate slider live update
+            rateSlider.addEventListener('input', () => {
+                rateSlider.dataset.touched = '1';
+                rateLabel.textContent = rateSlider.value + '%';
+            });
+
+            // Apply and Clear buttons
+            document.getElementById('whatifApplyBtn').addEventListener('click', () => this._applyScenario());
+            document.getElementById('whatifClearBtn').addEventListener('click', () => this._clearScenario());
+        }
+    },
+
+    _applyScenario() {
+        // 1. Read form inputs into scenarioState
+        const state = {
+            active: true,
+            addedExpenses: [],
+            removedExpenseIds: [],
+            rateOverride: null,
+            addedDeposits: []
+        };
+
+        // Expense changes
+        if (document.getElementById('whatifExpenseEnabled').checked) {
+            const mode = document.querySelector('[data-whatif-expense-mode].active').dataset.whatifExpenseMode;
+            if (mode === 'add') {
+                const name = document.getElementById('whatifExpenseName').value.trim();
+                const type = document.querySelector('[data-whatif-type].active').dataset.whatifType;
+                const cost = parseFloat(document.getElementById('whatifExpenseCost').value) || 0;
+                if (name && cost > 0) {
+                    state.addedExpenses.push({
+                        id: 'whatif_' + Date.now(),
+                        name: name,
+                        type: type,
+                        cost: type === 'opex' ? cost : cost, // annual cost for both
+                        // CapEx: treat annual cost as cost/interval. Use interval=1 so annualCost = cost
+                        interval: type === 'capex' ? 1 : undefined,
+                        billingCycle: type === 'opex' ? 'yearly' : undefined,
+                        lastProcurementDate: new Date().toISOString().split('T')[0],
+                        createdAt: new Date().toISOString()
+                    });
+                }
+            } else {
+                const removeId = document.getElementById('whatifExpenseRemoveSelect').value;
+                if (removeId) {
+                    state.removedExpenseIds.push(removeId);
+                }
+            }
+        }
+
+        // Rate override
+        if (document.getElementById('whatifRateEnabled').checked) {
+            const rate = parseFloat(document.getElementById('whatifRate').value) / 100;
+            state.rateOverride = rate;
+        }
+
+        // Added deposit
+        if (document.getElementById('whatifDepositEnabled').checked) {
+            const amount = parseFloat(document.getElementById('whatifDepositAmount').value) || 0;
+            const date = document.getElementById('whatifDepositDate').value;
+            if (amount > 0 && date) {
+                state.addedDeposits.push({
+                    id: 'whatif_dep_' + Date.now(),
+                    type: 'deposit',
+                    date: date,
+                    amount: amount,
+                    createdAt: new Date().toISOString()
+                });
+            }
+        }
+
+        this.scenarioState = state;
+
+        // 2. Build patched data copy
+        const originalData = this.data;
+        const patchedData = {
+            settings: { ...originalData.settings },
+            expenses: [...originalData.expenses],
+            events: [...originalData.events]
+        };
+
+        // Apply expense mutations
+        state.addedExpenses.forEach(e => patchedData.expenses.push(e));
+        if (state.removedExpenseIds.length > 0) {
+            patchedData.expenses = patchedData.expenses.filter(e => !state.removedExpenseIds.includes(e.id));
+        }
+
+        // Apply rate override: insert a rate_change event at fund start to override all rates
+        if (state.rateOverride !== null) {
+            // Remove all existing rate_change events and add one at start
+            patchedData.events = patchedData.events.filter(e => e.type !== 'rate_change');
+            patchedData.events.push({
+                id: 'whatif_rate',
+                type: 'rate_change',
+                date: patchedData.settings.fundStartDate,
+                rate: state.rateOverride,
+                createdAt: new Date().toISOString()
+            });
+        }
+
+        // Apply deposit mutations
+        state.addedDeposits.forEach(d => patchedData.events.push(d));
+
+        // 3. Temporarily swap data, generate scenario projection, restore
+        this.data = patchedData;
+        const projYears = patchedData.settings.projectionYears || 20;
+        const scenarioProjections = this.calculateProjection(projYears);
+        this.data = originalData;
+
+        // 4. Generate current (baseline) projection for comparison
+        const currentProjections = this.calculateProjection(projYears);
+
+        // 5. Store scenario projections for delta table refresh on timeline scrub
+        this._scenarioProjections = scenarioProjections;
+        this._currentProjections = currentProjections;
+
+        // 6. Add scenario overlay to chart
+        this._addScenarioDataset(scenarioProjections);
+
+        // 7. Render delta table
+        this._renderDeltaTable(currentProjections, scenarioProjections);
+
+        // 8. Add visual indicator to main chart card
+        const chartCard = document.getElementById('mainChart')?.closest('.chart-card');
+        if (chartCard) chartCard.classList.add('whatif-active-indicator');
+    },
+
+    _addScenarioDataset(scenarioProjections) {
+        if (!this.chart) return;
+
+        // Remove any existing scenario dataset first
+        this._removeScenarioDataset();
+
+        // Add scenario balance line (dashed, orange)
+        this.chart.data.datasets.push({
+            label: 'Scenario Balance',
+            data: scenarioProjections.map(p => ({ x: p.date, y: p.balance })),
+            borderColor: '#f59e0b',
+            backgroundColor: 'transparent',
+            borderDash: [6, 4],
+            borderWidth: 2,
+            tension: 0.4,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            fill: false,
+            order: 0,
+            _whatifScenario: true // tag for removal
+        });
+
+        this.chart.update();
+    },
+
+    _removeScenarioDataset() {
+        if (!this.chart) return;
+        this.chart.data.datasets = this.chart.data.datasets.filter(ds => !ds._whatifScenario);
+    },
+
+    _clearScenario() {
+        this.scenarioState = { active: false, addedExpenses: [], removedExpenseIds: [], rateOverride: null, addedDeposits: [] };
+        this._scenarioProjections = null;
+        this._currentProjections = null;
+
+        // Remove scenario dataset from chart
+        this._removeScenarioDataset();
+        if (this.chart) this.chart.update();
+
+        // Clear delta table
+        const deltaEl = document.getElementById('whatifDelta');
+        if (deltaEl) {
+            deltaEl.style.display = 'none';
+            deltaEl.innerHTML = '';
+        }
+
+        // Remove active indicator
+        const chartCard = document.getElementById('mainChart')?.closest('.chart-card');
+        if (chartCard) chartCard.classList.remove('whatif-active-indicator');
+    },
+
+    _refreshWhatIfDelta() {
+        // Re-render delta table at current timeline date (scenario overlay stays stable on chart)
+        if (this._scenarioProjections && this._currentProjections) {
+            this._renderDeltaTable(this._currentProjections, this._scenarioProjections);
+        }
+    },
+
+    _renderDeltaTable(currentProjections, scenarioProjections) {
+        const deltaEl = document.getElementById('whatifDelta');
+        if (!deltaEl) return;
+
+        const fundStart = new Date(this.data.settings.fundStartDate);
+        const timelineMs = this.timelineDate.getTime();
+
+        // Helper: find projection value closest to a target date
+        const findClosest = (projections, targetDate) => {
+            const targetMs = targetDate.getTime();
+            let closest = projections[0];
+            let minDiff = Infinity;
+            for (const p of projections) {
+                const diff = Math.abs(new Date(p.date).getTime() - targetMs);
+                if (diff < minDiff) { minDiff = diff; closest = p; }
+            }
+            return closest;
+        };
+
+        // Compute horizons: 5 and 10 years from timeline date
+        const horizon5 = new Date(timelineMs + 5 * 365.25 * 24 * 60 * 60 * 1000);
+        const horizon10 = new Date(timelineMs + 10 * 365.25 * 24 * 60 * 60 * 1000);
+
+        const cur5 = findClosest(currentProjections, horizon5);
+        const scn5 = findClosest(scenarioProjections, horizon5);
+        const cur10 = findClosest(currentProjections, horizon10);
+        const scn10 = findClosest(scenarioProjections, horizon10);
+
+        // Current and scenario projections at timeline date for sustainability
+        const curNow = this.project(this.timelineDate);
+
+        // Build patched data for scenario sustainability
+        const originalData = this.data;
+        const patchedData = {
+            settings: { ...originalData.settings },
+            expenses: [...originalData.expenses],
+            events: [...originalData.events]
+        };
+        const state = this.scenarioState;
+        state.addedExpenses.forEach(e => patchedData.expenses.push(e));
+        if (state.removedExpenseIds.length > 0) {
+            patchedData.expenses = patchedData.expenses.filter(e => !state.removedExpenseIds.includes(e.id));
+        }
+        if (state.rateOverride !== null) {
+            patchedData.events = patchedData.events.filter(e => e.type !== 'rate_change');
+            patchedData.events.push({
+                id: 'whatif_rate', type: 'rate_change',
+                date: patchedData.settings.fundStartDate,
+                rate: state.rateOverride, createdAt: new Date().toISOString()
+            });
+        }
+        state.addedDeposits.forEach(d => patchedData.events.push(d));
+
+        this.data = patchedData;
+        const scnNow = this.project(this.timelineDate);
+        this.data = originalData;
+
+        // Sustainability ratio = annual gains / total annual cost * 100
+        const curSustain = curNow.totalAnnualCost > 0 ? Math.round(curNow.annualGainAmount / curNow.totalAnnualCost * 100) : 999;
+        const scnSustain = scnNow.totalAnnualCost > 0 ? Math.round(scnNow.annualGainAmount / scnNow.totalAnnualCost * 100) : 999;
+
+        // Items fully funded
+        const curFunded = curNow.expenses.filter(e => e.progress >= 100).length;
+        const curTotal = curNow.expenses.length;
+        const scnFunded = scnNow.expenses.filter(e => e.progress >= 100).length;
+        const scnTotal = scnNow.expenses.length;
+
+        const fmt = (v) => this.formatNumber(Math.round(v));
+        const deltaClass = (d) => d > 0 ? 'whatif-delta-positive' : d < 0 ? 'whatif-delta-negative' : '';
+        const deltaFmt = (d) => (d > 0 ? '+' : '') + fmt(d);
+        const deltaPP = (d) => (d > 0 ? '+' : '') + d + ' pp';
+
+        const rows = [
+            {
+                label: 'Balance (5 yr)',
+                cur: fmt(cur5.balance),
+                scn: fmt(scn5.balance),
+                delta: deltaFmt(scn5.balance - cur5.balance),
+                cls: deltaClass(scn5.balance - cur5.balance)
+            },
+            {
+                label: 'Balance (10 yr)',
+                cur: fmt(cur10.balance),
+                scn: fmt(scn10.balance),
+                delta: deltaFmt(scn10.balance - cur10.balance),
+                cls: deltaClass(scn10.balance - cur10.balance)
+            },
+            {
+                label: 'Sustainability',
+                cur: curSustain >= 999 ? 'N/A' : curSustain + '%',
+                scn: scnSustain >= 999 ? 'N/A' : scnSustain + '%',
+                delta: (curSustain >= 999 || scnSustain >= 999) ? '-' : deltaPP(scnSustain - curSustain),
+                cls: (curSustain >= 999 || scnSustain >= 999) ? '' : deltaClass(scnSustain - curSustain)
+            },
+            {
+                label: 'Items funded',
+                cur: curFunded + ' / ' + curTotal,
+                scn: scnFunded + ' / ' + scnTotal,
+                delta: (scnFunded - curFunded > 0 ? '+' : '') + (scnFunded - curFunded),
+                cls: deltaClass(scnFunded - curFunded)
+            }
+        ];
+
+        deltaEl.style.display = '';
+        deltaEl.innerHTML = '<table>' +
+            '<thead><tr><th>Metric</th><th>Current</th><th>Scenario</th><th>Delta</th></tr></thead>' +
+            '<tbody>' +
+            rows.map(r =>
+                '<tr>' +
+                '<td style="color: var(--text-secondary);">' + r.label + '</td>' +
+                '<td>' + r.cur + '</td>' +
+                '<td>' + r.scn + '</td>' +
+                '<td class="' + r.cls + '">' + r.delta + '</td>' +
+                '</tr>'
+            ).join('') +
+            '</tbody></table>';
     },
 
     // ========== PRIORITY QUEUE ==========

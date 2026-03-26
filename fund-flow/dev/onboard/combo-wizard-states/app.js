@@ -311,6 +311,17 @@ const FundFlow = {
                 });
             });
         });
+
+        // Combo onboarding: show welcome modal on first visit, or smart fallbacks
+        const wizState = this.getWizardState();
+        if (!wizState) {
+            // First visit — show welcome modal
+            setTimeout(() => this.showWelcomeModal(), 400);
+        } else if (wizState === 'skipped') {
+            // Wizard was skipped — enable help cards and start-here badge
+            document.body.classList.add('help-visible');
+            this._addStartHereBadge();
+        }
     },
 
     loadFromStorage() {
@@ -496,6 +507,7 @@ const FundFlow = {
         document.getElementById('resetBtn').addEventListener('click', () => this.resetData());
         document.getElementById('loadExampleBtn').addEventListener('click', () => this.loadExampleData());
         document.getElementById('toggleHelpBtn').addEventListener('click', () => this.toggleHelp());
+        document.getElementById('setupWizardBtn').addEventListener('click', () => this.showWelcomeModal());
 
         // Pane toggle buttons
         document.querySelectorAll('.pane-toggle').forEach(btn => {
@@ -1393,8 +1405,12 @@ const FundFlow = {
         this.updateFilterCounts(items);
 
         if (filtered.length === 0) {
-            const msg = filter === 'all' ? 'No events or expenses yet' : 'No items match this filter';
-            container.innerHTML = '<div class="empty-state">' + msg + '</div>';
+            if (filter === 'all' && !this._hasRealData()) {
+                container.innerHTML = this._renderRichEmptyList();
+            } else {
+                const msg = filter === 'all' ? 'No events or expenses yet' : 'No items match this filter';
+                container.innerHTML = '<div class="empty-state">' + msg + '</div>';
+            }
             return;
         }
 
@@ -3203,6 +3219,447 @@ const FundFlow = {
         document.body.classList.toggle('help-visible');
         const isVisible = document.body.classList.contains('help-visible');
         this.showToast(isVisible ? 'Help cards visible — click Toggle Help again to hide' : 'Help cards hidden', 'success');
+    },
+
+    // ========== COMBO WIZARD + SMART EMPTY STATES ==========
+
+    getWizardState() {
+        return localStorage.getItem('fundflow_wizard_completed') || null;
+    },
+
+    setWizardState(state) {
+        localStorage.setItem('fundflow_wizard_completed', state);
+    },
+
+    _wizardStep: 0,
+
+    _hasRealData() {
+        return this.data.expenses.length > 0 ||
+            this.data.events.filter(ev => !ev.isInitial).length > 0;
+    },
+
+    _addStartHereBadge() {
+        const settingsRow = document.getElementById('fundSettingsRow');
+        if (!settingsRow || settingsRow.querySelector('.start-here-badge')) return;
+        const badge = document.createElement('span');
+        badge.className = 'start-here-badge';
+        badge.textContent = 'Start here';
+        settingsRow.style.position = 'relative';
+        settingsRow.prepend(badge);
+        // Remove badge on any settings interaction
+        const inputs = settingsRow.querySelectorAll('input, select');
+        inputs.forEach(input => {
+            input.addEventListener('input', () => this._removeStartHereBadge(), { once: true });
+            input.addEventListener('change', () => this._removeStartHereBadge(), { once: true });
+        });
+    },
+
+    _removeStartHereBadge() {
+        const badge = document.querySelector('.start-here-badge');
+        if (badge) badge.remove();
+    },
+
+    showWelcomeModal() {
+        // Close dropdown menu if open
+        const menu = document.getElementById('menuDropdown');
+        if (menu) menu.classList.remove('open');
+
+        // If user has data and triggers from menu, warn
+        if (this.getWizardState() && (this.data.expenses.length > 0 || this.data.events.length > 1)) {
+            if (!confirm('Starting the setup wizard will reset your current data. Continue?')) return;
+            this.data = {
+                settings: {
+                    initialPrincipal: 135000,
+                    accountType: 'isk',
+                    fundStartDate: new Date().toISOString().split('T')[0],
+                    redistributeFullyFunded: true
+                },
+                expenses: [],
+                events: []
+            };
+            this.timelineDate = new Date();
+            this.saveToStorage();
+            this.loadFromStorage();
+            this.render();
+            this.updateChart();
+        }
+
+        // Remove existing overlay
+        const existing = document.querySelector('.welcome-overlay');
+        if (existing) existing.remove();
+
+        const overlay = document.createElement('div');
+        overlay.className = 'welcome-overlay';
+        overlay.id = 'welcomeOverlay';
+        overlay.innerHTML = '<div class="welcome-modal" id="welcomeModal"></div>';
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) this._handleWizardSkip();
+        });
+
+        document.body.appendChild(overlay);
+        requestAnimationFrame(() => overlay.classList.add('open'));
+
+        this._wizardKeyHandler = (e) => {
+            if (e.key === 'Escape') this._handleWizardSkip();
+        };
+        document.addEventListener('keydown', this._wizardKeyHandler);
+
+        this._renderWelcomeScreen();
+    },
+
+    _renderWelcomeScreen() {
+        const modal = document.getElementById('welcomeModal');
+        if (!modal) return;
+        modal.innerHTML = `
+            <div class="welcome-title">Welcome to FundFlow</div>
+            <p class="welcome-subtitle">
+                FundFlow helps you plan how a self-funded investment covers your expenses over time.
+            </p>
+            <div class="welcome-cards">
+                <div class="welcome-card" id="welcomeExplore">
+                    <div class="wc-icon">\u{1F4CA}</div>
+                    <div class="wc-title">Explore with example data</div>
+                    <div class="wc-desc">Load a realistic scenario with laptops, hosting, and software subscriptions so you can explore the interface.</div>
+                </div>
+                <div class="welcome-card" id="welcomeSetup">
+                    <div class="wc-icon">\u270F\uFE0F</div>
+                    <div class="wc-title">Set up my fund</div>
+                    <div class="wc-desc">Answer a few quick questions to configure your investment fund and add your first expense.</div>
+                </div>
+            </div>
+            <button class="welcome-skip" id="welcomeSkipBtn">Skip \u2014 I\u2019ll figure it out</button>
+        `;
+
+        document.getElementById('welcomeExplore')?.addEventListener('click', () => this._handleExplorePath());
+        document.getElementById('welcomeSetup')?.addEventListener('click', () => this._handleSetupPath());
+        document.getElementById('welcomeSkipBtn')?.addEventListener('click', () => this._handleWizardSkip());
+    },
+
+    _handleExplorePath() {
+        this._closeWelcomeModal();
+        this.setWizardState('example');
+        this.loadExampleData();
+        this.showToast('Example data loaded \u2014 explore the chart and list below.', 'success');
+    },
+
+    _handleSetupPath() {
+        this._wizardStep = 1;
+        this._renderWizardStep(1);
+    },
+
+    _handleWizardSkip() {
+        this._closeWelcomeModal();
+        if (!this.getWizardState()) {
+            this.setWizardState('skipped');
+            document.body.classList.add('help-visible');
+            this._addStartHereBadge();
+        }
+    },
+
+    _closeWelcomeModal() {
+        const overlay = document.getElementById('welcomeOverlay');
+        if (overlay) {
+            overlay.classList.remove('open');
+            setTimeout(() => overlay.remove(), 300);
+        }
+        if (this._wizardKeyHandler) {
+            document.removeEventListener('keydown', this._wizardKeyHandler);
+            this._wizardKeyHandler = null;
+        }
+    },
+
+    _renderWizardStep(step) {
+        const modal = document.getElementById('welcomeModal');
+        if (!modal) return;
+        this._wizardStep = step;
+
+        const dots = [1, 2, 3].map(i => {
+            const cls = i === step ? 'active' : (i < step ? 'completed' : '');
+            return `<span class="wizard-dot ${cls}"></span>`;
+        }).join('');
+
+        let content = '';
+
+        if (step === 1) {
+            const principal = this.data.settings.initialPrincipal;
+            const rate = this.getCurrentRate() * 100;
+            const monthlyGain = Math.round(principal * (rate / 100) / 12);
+            content = `
+                <div class="wizard-progress">${dots}</div>
+                <div class="wizard-step-title">Your Investment</div>
+                <p class="wizard-step-desc">How much is in your fund, and what return do you expect?</p>
+                <div class="wizard-preview" id="wizardPreview">
+                    At <strong>${rate.toFixed(1)}%</strong>, <strong>${this.formatNumber(principal)} SEK</strong> generates ~<strong>${this.formatNumber(monthlyGain)} SEK/month</strong>.
+                </div>
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label class="form-label">Principal (SEK)</label>
+                    <input type="number" class="form-input" id="wizardPrincipal" value="${principal}" min="0" step="10000">
+                </div>
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label class="form-label">Expected annual return (%)</label>
+                    <input type="number" class="form-input" id="wizardRate" value="${rate}" min="1" max="20" step="0.5">
+                </div>
+                <div class="wizard-footer">
+                    <button class="welcome-skip" id="wizardBackBtn" style="width: auto;">Back</button>
+                    <button class="btn btn-primary" id="wizardNextBtn">Next</button>
+                </div>`;
+        } else if (step === 2) {
+            content = `
+                <div class="wizard-progress">${dots}</div>
+                <div class="wizard-step-title">Add Your First Expense</div>
+                <p class="wizard-step-desc">What\u2019s the first thing your fund needs to cover?</p>
+                <div class="wizard-quickpicks" id="wizardQuickpicks">
+                    <button class="wizard-quickpick" data-name="Laptop" data-cost="30000" data-type="capex" data-interval="4">Laptop</button>
+                    <button class="wizard-quickpick" data-name="Phone" data-cost="15000" data-type="capex" data-interval="3">Phone</button>
+                    <button class="wizard-quickpick" data-name="Software" data-cost="1200" data-type="opex" data-cycle="yearly">Software</button>
+                    <button class="wizard-quickpick" data-name="" data-type="custom">Custom\u2026</button>
+                </div>
+                <div id="wizardExpenseFields" style="display: none;">
+                    <div class="form-group" style="margin-bottom: 10px;">
+                        <label class="form-label">Name</label>
+                        <input type="text" class="form-input" id="wizardExpName" placeholder="e.g. Laptop">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 10px;">
+                        <label class="form-label">Cost (SEK)</label>
+                        <input type="number" class="form-input" id="wizardExpCost" placeholder="30000" min="0">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 10px;">
+                        <label class="form-label">Type</label>
+                        <select class="form-input" id="wizardExpType">
+                            <option value="capex">CapEx (one-time, recurring cycle)</option>
+                            <option value="opex">OpEx (subscription)</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="wizardExpIntervalGroup" style="margin-bottom: 10px;">
+                        <label class="form-label">Replace every (years)</label>
+                        <input type="number" class="form-input" id="wizardExpInterval" value="4" min="1" max="20">
+                    </div>
+                    <div class="form-group" id="wizardExpCycleGroup" style="display: none; margin-bottom: 10px;">
+                        <label class="form-label">Billing cycle</label>
+                        <select class="form-input" id="wizardExpCycle">
+                            <option value="monthly">Monthly</option>
+                            <option value="yearly">Yearly</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="wizard-footer">
+                    <button class="welcome-skip" id="wizardBackBtn" style="width: auto;">Back</button>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <button class="welcome-skip" id="wizardSkipExpBtn" style="width: auto;">Skip</button>
+                        <button class="btn btn-primary" id="wizardAddExpBtn">Add</button>
+                    </div>
+                </div>`;
+        } else if (step === 3) {
+            const principal = this.data.settings.initialPrincipal;
+            const rate = this.getCurrentRate();
+            const nExpenses = this.data.expenses.length;
+            content = `
+                <div class="wizard-progress">${dots}</div>
+                <div class="wizard-step-title">You\u2019re All Set!</div>
+                <p class="wizard-step-desc">Your fund is configured and ready to explore.</p>
+                <div class="wizard-summary">
+                    <div class="wizard-summary-item">
+                        <span class="label">Principal</span>
+                        <span class="value">${this.formatNumber(principal)} SEK</span>
+                    </div>
+                    <div class="wizard-summary-item">
+                        <span class="label">Return rate</span>
+                        <span class="value">${(rate * 100).toFixed(1)}%</span>
+                    </div>
+                    <div class="wizard-summary-item">
+                        <span class="label">Expenses tracked</span>
+                        <span class="value">${nExpenses}</span>
+                    </div>
+                </div>
+                <button class="btn btn-primary" id="wizardFinishBtn" style="width: 100%;">View your fund</button>`;
+        }
+
+        modal.innerHTML = content;
+        this._bindWizardStepEvents(step);
+    },
+
+    _bindWizardStepEvents(step) {
+        if (step === 1) {
+            const principalInput = document.getElementById('wizardPrincipal');
+            const rateInput = document.getElementById('wizardRate');
+            const preview = document.getElementById('wizardPreview');
+
+            const updatePreview = () => {
+                const p = parseFloat(principalInput?.value) || 0;
+                const r = parseFloat(rateInput?.value) || 7;
+                const monthly = Math.round(p * (r / 100) / 12);
+                if (preview) {
+                    preview.innerHTML = `At <strong>${r.toFixed(1)}%</strong>, <strong>${this.formatNumber(p)} SEK</strong> generates ~<strong>${this.formatNumber(monthly)} SEK/month</strong>.`;
+                }
+                // Live-update app behind modal
+                this.data.settings.initialPrincipal = p;
+                this.saveToStorage();
+                this.render();
+                this.updateChart();
+            };
+
+            principalInput?.addEventListener('input', updatePreview);
+            rateInput?.addEventListener('input', updatePreview);
+
+            document.getElementById('wizardBackBtn')?.addEventListener('click', () => this._renderWelcomeScreen());
+            document.getElementById('wizardNextBtn')?.addEventListener('click', () => {
+                const principal = parseFloat(document.getElementById('wizardPrincipal')?.value) || 0;
+                const rate = parseFloat(document.getElementById('wizardRate')?.value) / 100 || 0.07;
+
+                if (principal <= 0) {
+                    const el = document.getElementById('wizardPrincipal');
+                    if (el) el.style.borderColor = 'var(--accent-danger)';
+                    return;
+                }
+
+                // Save investment settings
+                this.data.settings.initialPrincipal = principal;
+                const today = new Date().toISOString().split('T')[0];
+                this.data.settings.fundStartDate = today;
+
+                // Create or update initial deposit
+                const existingDeposit = this.data.events.find(ev => ev.type === 'deposit' && ev.isInitial);
+                if (existingDeposit) {
+                    existingDeposit.amount = principal;
+                    existingDeposit.date = today;
+                } else {
+                    this.data.events.push({
+                        id: this.generateId(),
+                        type: 'deposit',
+                        date: today,
+                        amount: principal,
+                        isInitial: true,
+                        createdAt: new Date().toISOString()
+                    });
+                }
+
+                // Set rate
+                this.addOrUpdateRateChange(rate);
+
+                this.saveToStorage();
+                this.render();
+                this.updateChart();
+                this._renderWizardStep(2);
+            });
+
+        } else if (step === 2) {
+            const fieldsDiv = document.getElementById('wizardExpenseFields');
+            const typeSelect = document.getElementById('wizardExpType');
+            const intervalGroup = document.getElementById('wizardExpIntervalGroup');
+            const cycleGroup = document.getElementById('wizardExpCycleGroup');
+
+            // Quick-pick buttons
+            document.querySelectorAll('#wizardQuickpicks .wizard-quickpick').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    if (fieldsDiv) fieldsDiv.style.display = '';
+                    if (btn.dataset.type === 'custom') {
+                        // Show empty fields
+                        const nameEl = document.getElementById('wizardExpName');
+                        const costEl = document.getElementById('wizardExpCost');
+                        if (nameEl) nameEl.value = '';
+                        if (costEl) costEl.value = '';
+                        if (nameEl) nameEl.focus();
+                    } else {
+                        const nameEl = document.getElementById('wizardExpName');
+                        const costEl = document.getElementById('wizardExpCost');
+                        if (nameEl) nameEl.value = btn.dataset.name;
+                        if (costEl) costEl.value = btn.dataset.cost;
+                        if (typeSelect) {
+                            typeSelect.value = btn.dataset.type;
+                            typeSelect.dispatchEvent(new Event('change'));
+                        }
+                        if (btn.dataset.interval) {
+                            const intEl = document.getElementById('wizardExpInterval');
+                            if (intEl) intEl.value = btn.dataset.interval;
+                        }
+                        if (btn.dataset.cycle) {
+                            const cycleEl = document.getElementById('wizardExpCycle');
+                            if (cycleEl) cycleEl.value = btn.dataset.cycle;
+                        }
+                    }
+                });
+            });
+
+            // Toggle interval/cycle based on type
+            typeSelect?.addEventListener('change', () => {
+                const isOpex = typeSelect.value === 'opex';
+                if (intervalGroup) intervalGroup.style.display = isOpex ? 'none' : '';
+                if (cycleGroup) cycleGroup.style.display = isOpex ? '' : 'none';
+            });
+
+            document.getElementById('wizardBackBtn')?.addEventListener('click', () => this._renderWizardStep(1));
+            document.getElementById('wizardSkipExpBtn')?.addEventListener('click', () => this._renderWizardStep(3));
+            document.getElementById('wizardAddExpBtn')?.addEventListener('click', () => {
+                const name = document.getElementById('wizardExpName')?.value.trim();
+                const cost = parseFloat(document.getElementById('wizardExpCost')?.value);
+                const type = document.getElementById('wizardExpType')?.value || 'capex';
+
+                if (!name || isNaN(cost) || cost <= 0) {
+                    if (!name) { const el = document.getElementById('wizardExpName'); if (el) el.style.borderColor = 'var(--accent-danger)'; }
+                    if (isNaN(cost) || cost <= 0) { const el = document.getElementById('wizardExpCost'); if (el) el.style.borderColor = 'var(--accent-danger)'; }
+                    return;
+                }
+
+                const today = new Date().toISOString().split('T')[0];
+                const newExpense = {
+                    id: this.generateId(),
+                    type: type,
+                    name: name,
+                    cost: cost,
+                    interval: type === 'opex' ? 1 : (parseFloat(document.getElementById('wizardExpInterval')?.value) || 4),
+                    billingCycle: type === 'opex' ? (document.getElementById('wizardExpCycle')?.value || 'monthly') : null,
+                    lastProcurementDate: today
+                };
+                this.data.expenses.push(newExpense);
+                this.data.events.push({
+                    id: this.generateId(),
+                    type: 'expense_create',
+                    date: today,
+                    expenseId: newExpense.id,
+                    name: name,
+                    expenseType: type,
+                    cost: cost,
+                    interval: newExpense.interval,
+                    billingCycle: newExpense.billingCycle,
+                    lastProcurementDate: today,
+                    createdAt: new Date().toISOString()
+                });
+
+                this.saveToStorage();
+                this.render();
+                this.updateChart();
+                this._renderWizardStep(3);
+            });
+
+        } else if (step === 3) {
+            document.getElementById('wizardFinishBtn')?.addEventListener('click', () => {
+                this.setWizardState('completed');
+                this._closeWelcomeModal();
+                this.showToast('Your fund is set up.', 'success');
+            });
+        }
+    },
+
+    _renderRichEmptyList() {
+        return `<div class="empty-state-rich">
+            <p>This is where your expenses and fund events appear.</p>
+            <div class="empty-state-minicards">
+                <div class="empty-state-minicard">
+                    <div class="mc-title">CapEx</div>
+                    <div class="mc-desc">One-time purchases on a cycle (laptops, phones). Funding progress is tracked.</div>
+                </div>
+                <div class="empty-state-minicard">
+                    <div class="mc-title">OpEx</div>
+                    <div class="mc-desc">Ongoing subscriptions (hosting, software). Deducted from gains continuously.</div>
+                </div>
+            </div>
+            <div class="empty-state-actions">
+                <button class="btn btn-primary btn-sm" onclick="FundFlow.openExpenseModal()">Add an expense</button>
+                <button class="btn btn-secondary btn-sm" onclick="FundFlow.openEventModal()">Add an event</button>
+                <button class="btn btn-sm" onclick="FundFlow.loadExampleData()">Load example data</button>
+            </div>
+        </div>`;
     },
 
     // ========== UTILS ==========

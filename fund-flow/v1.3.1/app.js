@@ -275,7 +275,7 @@ const FundFlow = {
 
     chart: null,
     breakdownChart: null,
-    visiblePanes: { breakdown: false, priority: false, cashflow: false, milestones: false },
+    visiblePanes: { breakdown: false, priority: false, cashflow: false },
     priorityMode: 'full', // 'full' or 'compact'
     timelineDate: new Date(),
     editingEventId: null,
@@ -290,27 +290,6 @@ const FundFlow = {
         this.bindEvents();
         this.initChart();
         this.render();
-        this.listenForSWUpdate();
-    },
-
-    listenForSWUpdate() {
-        if (!('serviceWorker' in navigator)) return;
-        navigator.serviceWorker.ready.then((registration) => {
-            // Check for waiting worker on page load.
-            if (registration.waiting) {
-                this.showToast('Update available \u2014 refresh to get the latest version');
-            }
-            // Listen for new service workers that finish installing.
-            registration.addEventListener('updatefound', () => {
-                const newWorker = registration.installing;
-                if (!newWorker) return;
-                newWorker.addEventListener('statechange', () => {
-                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                        this.showToast('Update available \u2014 refresh to get the latest version');
-                    }
-                });
-            });
-        });
     },
 
     loadFromStorage() {
@@ -618,7 +597,6 @@ const FundFlow = {
         if (this.visiblePanes.breakdown) this._renderBreakdownPane();
         if (this.visiblePanes.priority) this._renderPriorityPane();
         if (this.visiblePanes.cashflow) this._renderCashFlowPane();
-        if (this.visiblePanes.milestones) this._renderMilestonesPane();
     },
 
     resetToToday() {
@@ -1994,7 +1972,7 @@ const FundFlow = {
         });
 
         // Show/hide pane card
-        const paneIds = { breakdown: 'breakdownPane', priority: 'priorityPane', cashflow: 'cashflowPane', milestones: 'milestonesPane' };
+        const paneIds = { breakdown: 'breakdownPane', priority: 'priorityPane', cashflow: 'cashflowPane' };
         const card = document.getElementById(paneIds[pane]);
         if (card) card.style.display = this.visiblePanes[pane] ? '' : 'none';
 
@@ -2003,7 +1981,6 @@ const FundFlow = {
             if (pane === 'breakdown') this._renderBreakdownPane();
             else if (pane === 'priority') this._renderPriorityPane();
             else if (pane === 'cashflow') this._renderCashFlowPane();
-            else if (pane === 'milestones') this._renderMilestonesPane();
         } else {
             // Destroy breakdown chart when hiding to free resources
             if (pane === 'breakdown' && this.breakdownChart) {
@@ -2039,204 +2016,6 @@ const FundFlow = {
     _renderCashFlowPane() {
         const container = document.getElementById('cashflowView');
         if (container) this._renderCashFlowFull(container);
-    },
-
-    // ========== MILESTONES PANE ==========
-    // Gantt-style horizontal timeline showing when each expense is projected
-    // to become fully funded, plotted against its scheduled purchase date.
-
-    _renderMilestonesPane() {
-        const container = document.getElementById('milestonesView');
-        if (!container) return;
-
-        const proj = this.project(this.timelineDate);
-        const expenses = proj.expenses;
-
-        if (expenses.length === 0) {
-            container.innerHTML = '<div class="empty-state">Add expenses to see funding milestones</div>';
-            return;
-        }
-
-        const settings = this.data.settings;
-        const projYears = settings.projectionYears || 20;
-        const axisStart = new Date(this.timelineDate);
-        const axisEnd = new Date(axisStart);
-        axisEnd.setFullYear(axisEnd.getFullYear() + projYears);
-        const axisStartMs = axisStart.getTime();
-        const axisEndMs = axisEnd.getTime();
-        const axisRange = axisEndMs - axisStartMs;
-
-        // Map a date to a percentage position on the axis (clamped 0–100)
-        const dateToPercent = (d) => {
-            if (!d) return null;
-            const ms = new Date(d).getTime();
-            const pct = ((ms - axisStartMs) / axisRange) * 100;
-            return Math.max(0, Math.min(100, pct));
-        };
-
-        // Generate axis year labels
-        const startYear = axisStart.getFullYear();
-        const endYear = axisEnd.getFullYear();
-        const labelYears = [];
-        // Pick ~5-8 evenly spaced years for labels
-        const yearSpan = endYear - startYear;
-        const step = yearSpan <= 8 ? 1 : yearSpan <= 16 ? 2 : Math.ceil(yearSpan / 8);
-        for (let y = startYear; y <= endYear; y += step) {
-            labelYears.push(y);
-        }
-        if (labelYears[labelYears.length - 1] !== endYear) labelYears.push(endYear);
-
-        // Separate CapEx and OpEx, sort CapEx by scheduled date
-        const capexItems = expenses.filter(e => e.type === 'capex');
-        const opexItems = expenses.filter(e => e.type === 'opex');
-
-        // Sort CapEx: items with scheduled dates first (ascending), then items without
-        capexItems.sort((a, b) => {
-            const aDate = a.scheduledDate ? new Date(a.scheduledDate).getTime() : Infinity;
-            const bDate = b.scheduledDate ? new Date(b.scheduledDate).getTime() : Infinity;
-            return aDate - bDate;
-        });
-
-        // Compute urgency colour for a CapEx item (reuses Priority Queue logic)
-        const getStatusColor = (exp) => {
-            if (exp.progress >= 100) return 'var(--accent-primary)';
-            if (exp.scheduledDate && exp.projectedDate) {
-                const schedMs = new Date(exp.scheduledDate).getTime();
-                const projMs = new Date(exp.projectedDate).getTime();
-                const urgencyDays = (schedMs - projMs) / this.MS_PER_DAY;
-                if (urgencyDays < 0) return 'var(--accent-danger)';
-                if (urgencyDays < 90) return 'var(--accent-warning)';
-                return 'var(--accent-success)';
-            }
-            return 'var(--text-muted)';
-        };
-
-        const getMarginDays = (exp) => {
-            if (!exp.scheduledDate || !exp.projectedDate) return null;
-            const schedMs = new Date(exp.scheduledDate).getTime();
-            const projMs = new Date(exp.projectedDate).getTime();
-            return Math.round((schedMs - projMs) / this.MS_PER_DAY);
-        };
-
-        const formatDate = (d) => d ? new Date(d).toLocaleDateString('sv-SE') : '—';
-
-        // Build axis labels HTML
-        let html = '<div class="milestone-axis">';
-        html += '<div class="milestone-axis-labels">';
-        labelYears.forEach(y => {
-            html += '<span>' + y + '</span>';
-        });
-        html += '</div>';
-
-        // CapEx section header
-        if (capexItems.length > 0) {
-            html += '<div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 12px 2px; font-weight: 600;">Capital Expenses</div>';
-
-            capexItems.forEach(exp => {
-                const color = getStatusColor(exp);
-                const marginDays = getMarginDays(exp);
-                const projPct = dateToPercent(exp.projectedDate);
-                const schedPct = dateToPercent(exp.scheduledDate);
-                const isFunded = exp.progress >= 100;
-
-                // Tooltip content
-                let tooltipContent = '<strong>' + this.escapeHtml(exp.name) + '</strong><br>';
-                tooltipContent += 'Cost: ' + this.formatNumber(exp.cost) + ' SEK every ' + (exp.interval || '?') + ' yr<br>';
-                tooltipContent += 'Annual: ' + this.formatNumber(exp.annualCost) + ' SEK/yr<br>';
-                tooltipContent += 'Progress: ' + Math.round(exp.progress) + '%<br>';
-                tooltipContent += 'Due: ' + formatDate(exp.scheduledDate) + '<br>';
-                tooltipContent += 'Projected: ' + formatDate(exp.projectedDate);
-                if (marginDays !== null) {
-                    const absDays = Math.abs(marginDays);
-                    const months = Math.round(absDays / 30.44);
-                    tooltipContent += '<br><span style="color: ' + color + '; font-weight: 600;">';
-                    if (marginDays < 0) {
-                        tooltipContent += months + ' month' + (months !== 1 ? 's' : '') + ' behind schedule';
-                    } else {
-                        tooltipContent += months + ' month' + (months !== 1 ? 's' : '') + ' ahead of schedule';
-                    }
-                    tooltipContent += '</span>';
-                }
-
-                html += '<div class="milestone-row">';
-                // Label column
-                html += '<div class="milestone-label">';
-                html += '<span class="milestone-label-name">' + this.escapeHtml(exp.name);
-                if (isFunded) html += ' <span class="milestone-check">\u2713</span>';
-                html += '</span>';
-                html += '<span class="milestone-label-cost">' + this.formatNumber(exp.annualCost) + ' SEK/yr</span>';
-                html += '</div>';
-
-                // Track column
-                html += '<div class="milestone-track">';
-
-                // Progress fill bar
-                const fillWidth = Math.min(100, exp.progress);
-                html += '<div class="milestone-fill" style="width: ' + fillWidth + '%; background: ' + color + '; opacity: 0.7;"></div>';
-
-                // Margin/danger zone between scheduled and projected markers
-                if (schedPct !== null && projPct !== null && !isFunded) {
-                    const leftPct = Math.min(schedPct, projPct);
-                    const rightPct = Math.max(schedPct, projPct);
-                    const zoneClass = marginDays < 0 ? 'milestone-zone-danger' : 'milestone-zone-margin';
-                    html += '<div class="milestone-zone ' + zoneClass + '" style="left: ' + leftPct + '%; width: ' + (rightPct - leftPct) + '%;"></div>';
-                }
-
-                // Scheduled date diamond marker
-                if (schedPct !== null) {
-                    html += '<div class="milestone-marker milestone-marker-scheduled" style="left: ' + schedPct + '%;"></div>';
-                }
-
-                // Projected date circle marker
-                if (projPct !== null && !isFunded) {
-                    html += '<div class="milestone-marker milestone-marker-projected" style="left: ' + projPct + '%; border-color: ' + color + ';"></div>';
-                }
-
-                html += '</div>'; // .milestone-track
-
-                // Tooltip
-                html += '<div class="milestone-tooltip">' + tooltipContent + '</div>';
-
-                html += '</div>'; // .milestone-row
-            });
-        }
-
-        // OpEx section
-        if (opexItems.length > 0) {
-            html += '<div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: 10px 12px 2px; font-weight: 600;">Subscriptions</div>';
-
-            opexItems.forEach(exp => {
-                // OpEx coverage: what fraction of annual cost is covered by allocated gains
-                const coverage = exp.annualCost > 0 ? Math.min(100, (exp.allocatedAnnualGains / exp.annualCost) * 100) : 0;
-                const isCovered = coverage >= 100;
-                const color = isCovered ? 'var(--accent-primary)' : coverage >= 50 ? 'var(--accent-warning)' : 'var(--accent-danger)';
-
-                let tooltipContent = '<strong>' + this.escapeHtml(exp.name) + '</strong><br>';
-                tooltipContent += 'Annual cost: ' + this.formatNumber(exp.annualCost) + ' SEK/yr<br>';
-                tooltipContent += 'Allocated: ' + this.formatNumber(exp.allocatedAnnualGains) + ' SEK/yr<br>';
-                tooltipContent += 'Coverage: ' + Math.round(coverage) + '%';
-
-                html += '<div class="milestone-row">';
-                html += '<div class="milestone-label">';
-                html += '<span class="milestone-label-name">' + this.escapeHtml(exp.name);
-                if (isCovered) html += ' <span class="milestone-check">\u2713</span>';
-                html += '</span>';
-                html += '<span class="milestone-label-cost">' + this.formatNumber(exp.annualCost) + ' SEK/yr</span>';
-                html += '</div>';
-
-                // OpEx bar: thin continuous line showing coverage ratio
-                html += '<div class="milestone-opex-track">';
-                html += '<div class="milestone-opex-bar" style="width: ' + coverage + '%; background: ' + color + ';"></div>';
-                html += '<span class="milestone-opex-label">' + Math.round(coverage) + '% covered</span>';
-                html += '</div>';
-
-                html += '<div class="milestone-tooltip">' + tooltipContent + '</div>';
-                html += '</div>'; // .milestone-row
-            });
-        }
-
-        html += '</div>'; // .milestone-axis
-        container.innerHTML = html;
     },
 
     // Render priority queue — compact single-line rows (rank | name | urgency | mini bar | %)

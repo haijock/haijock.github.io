@@ -337,6 +337,95 @@
         .milestone-tooltip strong { color: var(--text-primary); }
         .milestone-row:hover .milestone-tooltip { display: block; }
 
+        /* ========== COST GROWTH PANE ========== */
+        .costgrowth-controls {
+            padding: 12px 16px; border-bottom: 1px solid var(--border);
+        }
+        .costgrowth-global-row {
+            display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+        }
+        .costgrowth-label {
+            font-size: 0.72rem; font-weight: 500; color: var(--text-secondary);
+            white-space: nowrap; min-width: 120px;
+        }
+        .costgrowth-slider {
+            flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
+            background: var(--bg-tertiary); border-radius: 2px; outline: none;
+            cursor: pointer;
+        }
+        .costgrowth-slider::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 14px; height: 14px;
+            background: var(--accent-primary); border-radius: 50%; cursor: pointer;
+        }
+        .costgrowth-slider::-moz-range-thumb {
+            width: 14px; height: 14px; border: none;
+            background: var(--accent-primary); border-radius: 50%; cursor: pointer;
+        }
+        .costgrowth-rate-display {
+            font-family: var(--font-mono); font-size: 0.75rem; font-weight: 600;
+            color: var(--accent-primary); min-width: 48px; text-align: right;
+        }
+        .costgrowth-presets {
+            display: flex; gap: 6px; margin-bottom: 12px;
+        }
+        .costgrowth-preset-btn {
+            padding: 4px 10px; border: 1px solid var(--border); background: var(--bg-tertiary);
+            color: var(--text-muted); font-size: 0.65rem; cursor: pointer;
+            border-radius: 999px; transition: all 0.2s ease;
+            font-family: var(--font-sans); font-weight: 500;
+        }
+        .costgrowth-preset-btn:hover:not(.active) { color: var(--text-secondary); border-color: var(--text-muted); }
+        .costgrowth-preset-btn.active {
+            background: rgba(0, 212, 170, 0.1); color: var(--accent-primary);
+            border-color: var(--accent-primary);
+        }
+        .costgrowth-expense-table {
+            max-height: 180px; overflow-y: auto;
+        }
+        .costgrowth-expense-table table {
+            width: 100%; border-collapse: collapse; font-size: 0.7rem;
+        }
+        .costgrowth-expense-table th {
+            text-align: left; padding: 4px 8px; color: var(--text-muted);
+            font-weight: 500; font-size: 0.6rem; text-transform: uppercase;
+            letter-spacing: 0.05em; border-bottom: 1px solid var(--border);
+        }
+        .costgrowth-expense-table td {
+            padding: 5px 8px; border-bottom: 1px solid var(--border);
+            color: var(--text-secondary); vertical-align: middle;
+        }
+        .costgrowth-expense-table td:first-child { color: var(--text-primary); font-weight: 500; }
+        .costgrowth-expense-table .mono {
+            font-family: var(--font-mono); font-size: 0.65rem;
+        }
+        .costgrowth-override-input {
+            width: 56px; padding: 3px 6px; border: 1px solid var(--border);
+            background: var(--bg-tertiary); color: var(--text-primary);
+            font-family: var(--font-mono); font-size: 0.65rem;
+            border-radius: var(--radius-sm); text-align: right;
+        }
+        .costgrowth-override-input::placeholder { color: var(--text-muted); }
+        .costgrowth-override-input:focus {
+            outline: none; border-color: var(--accent-primary);
+        }
+        .costgrowth-chart-container {
+            height: 240px; padding: 12px 16px;
+        }
+        .costgrowth-summary {
+            padding: 10px 16px; font-size: 0.75rem; line-height: 1.5;
+        }
+        .costgrowth-summary.sustainable { color: var(--accent-success); }
+        .costgrowth-summary.unsustainable { color: var(--accent-danger); }
+        .costgrowth-save-btn {
+            padding: 4px 12px; border: 1px solid var(--border); background: var(--bg-tertiary);
+            color: var(--text-muted); font-size: 0.65rem; cursor: pointer;
+            border-radius: var(--radius-sm); transition: all 0.2s ease;
+            font-family: var(--font-sans); font-weight: 500;
+        }
+        .costgrowth-save-btn:hover {
+            color: var(--accent-primary); border-color: var(--accent-primary);
+        }
+
         /* Contextual help system */
         .help-card {
             display: none;
@@ -741,16 +830,16 @@
 #vsel a:hover{background:#1e1e3a;color:#fff}
 #vsel .vsel-cur{color:#6fc;font-weight:600}
 </style>
-<details id="vsel"><summary>main</summary>
+<details id="vsel"><summary>dev/feature/expense-growth-simulator</summary>
 <div class="vsel-dd">
 <div class="vsel-hd">current</div>
-<a href="./" class="vsel-cur">main</a>
+<a href="../../../">main</a>
 <hr class="vsel-hr">
 <div class="vsel-hd">releases</div>
-<a href="v1.6.0/">v1.6.0</a><a href="v1.5.0/">v1.5.0</a><a href="v1.4.0/">v1.4.0</a><a href="v1.3.1/">v1.3.1</a><a href="v1.3.0/">v1.3.0</a><a href="v1.2.1/">v1.2.1</a><a href="v1.2.0/">v1.2.0</a><a href="v1.1.0/">v1.1.0</a><a href="v1.0.0/">v1.0.0</a><a href="v0.1.0/">v0.1.0</a>
+<a href="../../../v1.6.0/">v1.6.0</a><a href="../../../v1.5.0/">v1.5.0</a><a href="../../../v1.4.0/">v1.4.0</a><a href="../../../v1.3.1/">v1.3.1</a><a href="../../../v1.3.0/">v1.3.0</a><a href="../../../v1.2.1/">v1.2.1</a><a href="../../../v1.2.0/">v1.2.0</a><a href="../../../v1.1.0/">v1.1.0</a><a href="../../../v1.0.0/">v1.0.0</a><a href="../../../v0.1.0/">v0.1.0</a>
 <hr class="vsel-hr">
 <div class="vsel-hd">development</div>
-<a href="dev/feature/annual-summary/">dev/feature/annual-summary</a><a href="dev/feature/combinable-filters/">dev/feature/combinable-filters</a><a href="dev/feature/expense-growth-simulator/">dev/feature/expense-growth-simulator</a><a href="dev/feature/mc-debounce/">dev/feature/mc-debounce</a><a href="dev/feature/sustainability-gauge/">dev/feature/sustainability-gauge</a><a href="dev/feature/what-if-scenarios/">dev/feature/what-if-scenarios</a><a href="dev/onboard/combo-wizard-states/">dev/onboard/combo-wizard-states</a><a href="dev/onboard/guided-walkthrough/">dev/onboard/guided-walkthrough</a><a href="dev/onboard/learn-by-doing/">dev/onboard/learn-by-doing</a><a href="dev/onboard/smart-empty-states/">dev/onboard/smart-empty-states</a>
+<a href="../../../dev/feature/annual-summary/">dev/feature/annual-summary</a><a href="../../../dev/feature/combinable-filters/">dev/feature/combinable-filters</a><a href="../../../dev/feature/expense-growth-simulator/" class="vsel-cur">dev/feature/expense-growth-simulator</a><a href="../../../dev/feature/mc-debounce/">dev/feature/mc-debounce</a><a href="../../../dev/feature/sustainability-gauge/">dev/feature/sustainability-gauge</a><a href="../../../dev/feature/what-if-scenarios/">dev/feature/what-if-scenarios</a><a href="../../../dev/onboard/combo-wizard-states/">dev/onboard/combo-wizard-states</a><a href="../../../dev/onboard/guided-walkthrough/">dev/onboard/guided-walkthrough</a><a href="../../../dev/onboard/learn-by-doing/">dev/onboard/learn-by-doing</a><a href="../../../dev/onboard/smart-empty-states/">dev/onboard/smart-empty-states</a>
 </div>
 </details>
 <!-- /version-selector -->
@@ -839,6 +928,7 @@
             <button class="pane-toggle" data-pane="priority">Priority</button>
             <button class="pane-toggle" data-pane="cashflow">Cash Flow</button>
             <button class="pane-toggle" data-pane="milestones">Milestones</button>
+            <button class="pane-toggle" data-pane="costgrowth">Cost Growth</button>
         </div>
 
         <!-- ===== BREAKDOWN PANE ===== -->
@@ -893,6 +983,33 @@
                 </div>
             </div>
             <div id="milestonesView" style="overflow-y: auto; max-height: 400px; padding: 8px 0;"></div>
+        </div>
+
+        <!-- ===== COST GROWTH PANE ===== -->
+        <div class="chart-card pane-card" id="costgrowthPane" style="display: none;">
+            <div class="chart-header">
+                <div class="chart-header-left">
+                    <span class="card-title">Expense Growth Simulator</span>
+                </div>
+                <button class="costgrowth-save-btn" onclick="FundFlow._saveCostGrowthRates()" title="Persist growth rates into your data model">Save rates</button>
+            </div>
+            <div class="costgrowth-controls">
+                <div class="costgrowth-global-row">
+                    <label class="costgrowth-label">Global growth rate</label>
+                    <input type="range" id="costgrowthGlobalSlider" min="-2" max="10" step="0.5" value="0" class="costgrowth-slider">
+                    <span id="costgrowthGlobalValue" class="costgrowth-rate-display">0 %</span>
+                </div>
+                <div class="costgrowth-presets">
+                    <button class="costgrowth-preset-btn active" data-rate="0">None (0 %)</button>
+                    <button class="costgrowth-preset-btn" data-rate="2">CPI (2 %)</button>
+                    <button class="costgrowth-preset-btn" data-rate="5">Tech (5 %)</button>
+                </div>
+                <div id="costgrowthExpenseTable" class="costgrowth-expense-table"></div>
+            </div>
+            <div class="costgrowth-chart-container">
+                <canvas id="costgrowthChart"></canvas>
+            </div>
+            <div id="costgrowthSummary" class="costgrowth-summary"></div>
         </div>
 
         <!-- ===== UNIFIED LIST ===== -->

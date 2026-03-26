@@ -282,6 +282,10 @@ const FundFlow = {
     editingExpenseId: null,
     activeFilter: 'all',
     _renderTimer: null,
+    _mcCache: null,          // { key: string, bands: Array } — last computed MC result
+    _mcDebounceTimer: null,  // timeout ID for pending MC debounce
+    _mcFadeTimer: null,      // timeout ID for fade-in step
+    _mcChartGen: 0,          // incremented on each chart create, used to discard stale callbacks
 
     // ========== INIT ==========
 
@@ -356,6 +360,9 @@ const FundFlow = {
         }
         if (this.data.settings.listDebounceMs === undefined) {
             this.data.settings.listDebounceMs = 300;
+        }
+        if (this.data.settings.mcDebounceMs === undefined) {
+            this.data.settings.mcDebounceMs = 400;
         }
     },
 
@@ -465,6 +472,12 @@ const FundFlow = {
         document.getElementById('listDebounceMs').addEventListener('input', (e) => {
             const ms = Math.max(0, Math.min(2000, parseInt(e.target.value) || 0));
             this.data.settings.listDebounceMs = ms;
+            this.saveToStorage();
+        });
+
+        document.getElementById('mcDebounceMs').addEventListener('input', (e) => {
+            const ms = Math.max(0, Math.min(2000, parseInt(e.target.value) || 0));
+            this.data.settings.mcDebounceMs = ms;
             this.saveToStorage();
         });
 
@@ -1201,7 +1214,223 @@ const FundFlow = {
         return bands;
     },
 
-    // ========== RENDER ==========
+    // ========== MONTE CARLO DEBOUNCE / CACHE / FADE ==========
+
+    /**
+     * Build a cache key from all parameters that affect the MC simulation output.
+     * Uses only raw settings/event data — no expensive project() call.
+     */
+    _mcCacheKey(projYears) {
+        const settings = this.data.settings;
+        const fundStart = settings.fundStartDate;
+        const expectedRate = this.getCurrentRate();
+        // Serialize deposits and expenses cheaply to detect changes
+        const depositSig = this.data.events
+            .filter(ev => ev.type === 'deposit')
+            .map(ev => ev.date + ':' + ev.amount)
+            .join('|');
+        const expenseSig = (this.data.expenses || [])
+            .map(e => e.id + ':' + e.annualCost + ':' + e.type)
+            .join('|');
+        return [
+            projYears, 300, 0.15,
+            expectedRate, settings.initialPrincipal,
+            fundStart, depositSig, expenseSig,
+            settings.showRealValues, settings.inflationRate
+        ].join('/');
+    },
+
+    /**
+     * Build the two MC dataset objects (p90 and p10) from bands data,
+     * with optional inflation adjustment. Returns an array of two datasets.
+     * @param {Array} bands — output from runMonteCarlo()
+     * @param {number} alpha — opacity multiplier (0–1) for fade effect
+     */
+    _buildMCDatasets(bands, alpha) {
+        if (alpha === undefined) alpha = 1;
+        const showReal = this.data.settings.showRealValues;
+        const inflRate = this.data.settings.inflationRate || 0.02;
+        const fundStartMs = new Date(this.data.settings.fundStartDate).getTime();
+
+        // Base colors at full opacity
+        const p90Border = 'rgba(0, 212, 170, ' + (0.2 * alpha) + ')';
+        const p10Border = 'rgba(239, 68, 68, ' + (0.25 * alpha) + ')';
+        const fillBg = 'rgba(124, 58, 237, ' + (0.04 * alpha) + ')';
+
+        return [
+            {
+                label: '90th Percentile',
+                data: bands.map(b => {
+                    let discount = 1;
+                    if (showReal) {
+                        const yrs = (new Date(b.date).getTime() - fundStartMs) / (365.25 * 24 * 60 * 60 * 1000);
+                        discount = Math.pow(1 + inflRate, yrs);
+                    }
+                    return { x: b.date, y: b.p90 / discount };
+                }),
+                borderColor: p90Border,
+                backgroundColor: 'transparent',
+                borderWidth: 1,
+                borderDash: [3, 3],
+                pointRadius: 0,
+                pointHoverRadius: 0,
+                fill: false,
+                tension: 0.4,
+                order: 10
+            },
+            {
+                label: '10th Percentile',
+                data: bands.map(b => {
+                    let discount = 1;
+                    if (showReal) {
+                        const yrs = (new Date(b.date).getTime() - fundStartMs) / (365.25 * 24 * 60 * 60 * 1000);
+                        discount = Math.pow(1 + inflRate, yrs);
+                    }
+                    return { x: b.date, y: b.p10 / discount };
+                }),
+                borderColor: p10Border,
+                backgroundColor: fillBg,
+                borderWidth: 1,
+                borderDash: [3, 3],
+                pointRadius: 0,
+                pointHoverRadius: 0,
+                fill: '-1',
+                tension: 0.4,
+                order: 10
+            }
+        ];
+    },
+
+    /**
+     * Find the indices of the MC datasets in the current chart, or -1 if absent.
+     * Returns { p90: index, p10: index }.
+     */
+    _findMCDatasetIndices() {
+        if (!this.chart) return { p90: -1, p10: -1 };
+        const datasets = this.chart.data.datasets;
+        let p90 = -1, p10 = -1;
+        for (let i = 0; i < datasets.length; i++) {
+            if (datasets[i].label === '90th Percentile') p90 = i;
+            if (datasets[i].label === '10th Percentile') p10 = i;
+        }
+        return { p90, p10 };
+    },
+
+    /**
+     * Dim existing MC datasets to a low-opacity "stale" state in one step.
+     * Single chart.update() call — no per-frame animation loop.
+     */
+    _fadeMCOut() {
+        const idx = this._findMCDatasetIndices();
+        if (idx.p90 === -1 || !this.chart) return;
+
+        const datasets = this.chart.data.datasets;
+        const stale = 0.15;
+        if (datasets[idx.p90]) {
+            datasets[idx.p90].borderColor = 'rgba(0, 212, 170, ' + (0.2 * stale) + ')';
+        }
+        if (datasets[idx.p10]) {
+            datasets[idx.p10].borderColor = 'rgba(239, 68, 68, ' + (0.25 * stale) + ')';
+            datasets[idx.p10].backgroundColor = 'rgba(124, 58, 237, ' + (0.04 * stale) + ')';
+        }
+        this.chart.update('none');
+    },
+
+    /**
+     * Apply MC bands to the live chart with a two-step fade-in.
+     * Step 1: add datasets at low opacity (one chart.update).
+     * Step 2: after a short delay, set full opacity (one more chart.update).
+     * Total: 2 chart.update() calls instead of ~18 per-frame calls.
+     */
+    _applyMCBands(bands, gen) {
+        if (!this.chart || gen !== this._mcChartGen) return;
+        if (this._mcFadeTimer) {
+            clearTimeout(this._mcFadeTimer);
+            this._mcFadeTimer = null;
+        }
+
+        // Build datasets at low initial opacity
+        const mcDatasets = this._buildMCDatasets(bands, 0.2);
+
+        // Replace or append MC datasets
+        const idx = this._findMCDatasetIndices();
+        const datasets = this.chart.data.datasets;
+        if (idx.p90 !== -1) {
+            datasets[idx.p90] = mcDatasets[0];
+            datasets[idx.p10] = mcDatasets[1];
+        } else {
+            datasets.push(mcDatasets[0]);
+            datasets.push(mcDatasets[1]);
+        }
+        this.chart.update('none');
+
+        // Step 2: fade to full opacity after a short delay
+        this._mcFadeTimer = setTimeout(() => {
+            this._mcFadeTimer = null;
+            if (!this.chart || gen !== this._mcChartGen) return;
+            const idxNow = this._findMCDatasetIndices();
+            const ds = this.chart.data.datasets;
+            if (idxNow.p90 !== -1 && ds[idxNow.p90]) {
+                ds[idxNow.p90].borderColor = 'rgba(0, 212, 170, 0.2)';
+            }
+            if (idxNow.p10 !== -1 && ds[idxNow.p10]) {
+                ds[idxNow.p10].borderColor = 'rgba(239, 68, 68, 0.25)';
+                ds[idxNow.p10].backgroundColor = 'rgba(124, 58, 237, 0.04)';
+            }
+            this.chart.update('none');
+        }, 80);
+    },
+
+    /**
+     * Schedule a debounced MC simulation. Called after every updateChart()/initChart().
+     * - If cache hits, applies bands immediately (no debounce, no fade).
+     * - If debounce is 0, runs immediately.
+     * - Otherwise, dims existing bands and runs after the delay.
+     */
+    _scheduleMC() {
+        // Clear any pending timers
+        if (this._mcDebounceTimer) {
+            clearTimeout(this._mcDebounceTimer);
+            this._mcDebounceTimer = null;
+        }
+        if (this._mcFadeTimer) {
+            clearTimeout(this._mcFadeTimer);
+            this._mcFadeTimer = null;
+        }
+
+        const gen = this._mcChartGen;
+        const projYears = this.data.settings.projectionYears || 20;
+        const cacheKey = this._mcCacheKey(projYears);
+
+        // Cache hit — apply immediately, no fade
+        if (this._mcCache && this._mcCache.key === cacheKey) {
+            this._applyMCBands(this._mcCache.bands, gen);
+            return;
+        }
+
+        const debounceMs = this.data.settings.mcDebounceMs || 0;
+
+        const runAndApply = () => {
+            // Stale check: if chart was recreated since we were scheduled, bail
+            if (gen !== this._mcChartGen) return;
+            const bands = this.runMonteCarlo(projYears, 300, 0.15);
+            this._mcCache = { key: cacheKey, bands: bands };
+            this._applyMCBands(bands, gen);
+        };
+
+        if (debounceMs === 0) {
+            // No debounce — run synchronously
+            runAndApply();
+            return;
+        }
+
+        // Dim existing bands immediately, then run MC after delay
+        this._fadeMCOut();
+        this._mcDebounceTimer = setTimeout(() => {
+            this._mcDebounceTimer = null;
+            runAndApply();
+        }, debounceMs);
+    },
 
     renderProjection(opts) {
         const skipList = opts && opts.skipList;
@@ -1321,6 +1550,12 @@ const FundFlow = {
         const debounceEl = document.getElementById('listDebounceMs');
         if (document.activeElement !== debounceEl) {
             debounceEl.value = this.data.settings.listDebounceMs ?? 300;
+        }
+
+        // MC debounce
+        const mcDebounceEl = document.getElementById('mcDebounceMs');
+        if (document.activeElement !== mcDebounceEl) {
+            mcDebounceEl.value = this.data.settings.mcDebounceMs ?? 400;
         }
     },
 
@@ -1720,6 +1955,7 @@ const FundFlow = {
     initChart() {
         const ctx = document.getElementById('mainChart').getContext('2d');
         this.chart = new Chart(ctx, this.getChartConfig());
+        this._scheduleMC();
     },
 
     getChartConfig(type) {
@@ -1750,53 +1986,9 @@ const FundFlow = {
             if (!opts.plugins) opts.plugins = {};
             opts.plugins.eventMarkers = { markers };
 
-            // Monte Carlo confidence bands (additive overlay — no effect on deterministic line)
-            const mcBands = this.runMonteCarlo(projYears, 300, 0.15);
+            // Monte Carlo bands are injected asynchronously via _scheduleMC()
+            // after the chart is created. Only deterministic datasets here.
             const showReal = this.data.settings.showRealValues;
-            const inflRate = this.data.settings.inflationRate || 0.02;
-            const fundStartMs = new Date(this.data.settings.fundStartDate).getTime();
-            const mcDatasets = [
-                {
-                    label: '90th Percentile',
-                    data: mcBands.map(b => {
-                        let discount = 1;
-                        if (showReal) {
-                            const yrs = (new Date(b.date).getTime() - fundStartMs) / (365.25 * 24 * 60 * 60 * 1000);
-                            discount = Math.pow(1 + inflRate, yrs);
-                        }
-                        return { x: b.date, y: b.p90 / discount };
-                    }),
-                    borderColor: 'rgba(0, 212, 170, 0.2)',
-                    backgroundColor: 'transparent',
-                    borderWidth: 1,
-                    borderDash: [3, 3],
-                    pointRadius: 0,
-                    pointHoverRadius: 0,
-                    fill: false,
-                    tension: 0.4,
-                    order: 10
-                },
-                {
-                    label: '10th Percentile',
-                    data: mcBands.map(b => {
-                        let discount = 1;
-                        if (showReal) {
-                            const yrs = (new Date(b.date).getTime() - fundStartMs) / (365.25 * 24 * 60 * 60 * 1000);
-                            discount = Math.pow(1 + inflRate, yrs);
-                        }
-                        return { x: b.date, y: b.p10 / discount };
-                    }),
-                    borderColor: 'rgba(239, 68, 68, 0.25)',
-                    backgroundColor: 'rgba(124, 58, 237, 0.04)',
-                    borderWidth: 1,
-                    borderDash: [3, 3],
-                    pointRadius: 0,
-                    pointHoverRadius: 0,
-                    fill: '-1',  // fill between this and previous (90th) dataset
-                    tension: 0.4,
-                    order: 10
-                }
-            ];
 
             return {
                 type: 'line',
@@ -1823,8 +2015,7 @@ const FundFlow = {
                             tension: 0.4,
                             pointRadius: 0,
                             order: 2
-                        },
-                        ...mcDatasets
+                        }
                     ]
                 },
                 options: opts
@@ -1972,6 +2163,9 @@ const FundFlow = {
         TimelinePlugin._state.xPixel = null;
         TimelinePlugin._state.dateLabel = null;
 
+        // Invalidate any in-flight MC callbacks from the previous chart
+        this._mcChartGen++;
+
         const canvas = document.getElementById('mainChart');
         if (this.chart) {
             this.chart.destroy();
@@ -1979,6 +2173,9 @@ const FundFlow = {
         const ctx = canvas.getContext('2d');
         this.chart = new Chart(ctx, this.getChartConfig('projection'));
         this._restoreTimelineBar();
+
+        // Schedule debounced Monte Carlo band injection
+        this._scheduleMC();
 
         // Refresh all visible panes
         this._refreshVisiblePanes();
@@ -3067,7 +3264,8 @@ const FundFlow = {
                 showRealValues: false,
                 inflationRate: 0.02,
                 projectionYears: 20,
-                listDebounceMs: 300
+                listDebounceMs: 300,
+                mcDebounceMs: 400
             },
             expenses: [
                 {

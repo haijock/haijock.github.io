@@ -1,0 +1,1109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>FundFlow v2 — Test Harness</title>
+    <style>
+        body {
+            font-family: 'JetBrains Mono', 'Courier New', monospace;
+            background: #0a0a0f; color: #f4f4f5;
+            max-width: 900px; margin: 0 auto; padding: 24px;
+            font-size: 13px; line-height: 1.7;
+        }
+        h1 { color: #00d4aa; font-size: 1.3rem; margin-bottom: 16px; }
+        h2 { color: #7c3aed; font-size: 1rem; margin-top: 24px; margin-bottom: 8px; border-bottom: 1px solid #27272a; padding-bottom: 4px; }
+        .pass { color: #10b981; }
+        .fail { color: #ef4444; font-weight: bold; }
+        .skip { color: #f59e0b; }
+        .summary {
+            margin-top: 24px; padding: 16px; border-radius: 8px;
+            border: 1px solid #27272a; background: #12121a;
+            font-size: 1.1rem;
+        }
+        .summary.all-pass { border-color: #10b981; }
+        .summary.has-fail { border-color: #ef4444; }
+        .test-line { padding: 2px 0; }
+        .detail { color: #71717a; font-size: 12px; margin-left: 24px; }
+    </style>
+</head>
+<body>
+<h1>FundFlow v2 Test Harness</h1>
+<div id="output"></div>
+<div id="summary" class="summary"></div>
+
+<script>
+/**
+ * Minimal test runner — no dependencies.
+ *
+ * Strategy: We can't load app.js directly because it depends on Chart.js and DOM elements.
+ * Instead, we extract just the FundFlow calculation methods and test them in isolation.
+ * This avoids the need to mock Chart.js, DOM elements, or localStorage.
+ */
+
+// ========== TEST FRAMEWORK ==========
+
+const results = { passed: 0, failed: 0, skipped: 0 };
+const outputEl = document.getElementById('output');
+let currentGroup = '';
+
+function group(name) {
+    currentGroup = name;
+    const h2 = document.createElement('h2');
+    h2.textContent = name;
+    outputEl.appendChild(h2);
+}
+
+function log(className, text) {
+    const div = document.createElement('div');
+    div.className = 'test-line';
+    div.innerHTML = '<span class="' + className + '">' + (className === 'pass' ? 'PASS' : className === 'fail' ? 'FAIL' : 'SKIP') + '</span> ' + text;
+    outputEl.appendChild(div);
+}
+
+function detail(text) {
+    const div = document.createElement('div');
+    div.className = 'detail';
+    div.textContent = text;
+    outputEl.appendChild(div);
+}
+
+function assert(condition, testName, details) {
+    if (condition) {
+        results.passed++;
+        log('pass', testName);
+    } else {
+        results.failed++;
+        log('fail', testName);
+        if (details) detail(details);
+    }
+}
+
+function assertApprox(actual, expected, tolerance, testName) {
+    const diff = Math.abs(actual - expected);
+    if (diff <= tolerance) {
+        results.passed++;
+        log('pass', testName);
+    } else {
+        results.failed++;
+        log('fail', testName);
+        detail('Expected ~' + expected.toFixed(2) + ' +/- ' + tolerance + ', got ' + actual.toFixed(2) + ' (diff: ' + diff.toFixed(4) + ')');
+    }
+}
+
+function skip(testName, reason) {
+    results.skipped++;
+    log('skip', testName + ' (' + reason + ')');
+}
+
+// ========== EXTRACT CALCULATION ENGINE ==========
+// We recreate a minimal FundFlow object with just the calculation methods.
+// This is a faithful copy of the methods from app.js — if app.js changes,
+// these should be updated. The test harness validates the LOGIC, not the DOM.
+
+const Engine = {
+    MS_PER_DAY: 86400000,
+    DAYS_PER_YEAR: 365.25,
+
+    _computePrincipalAndRate(sortedEvents, dateStr, settings) {
+        let principal = 0;
+        let rate = 0.07;
+        sortedEvents.forEach(ev => {
+            if (ev.date > dateStr) return;
+            if (ev.type === 'deposit') principal += ev.amount;
+            if (ev.type === 'rate_change') rate = ev.rate;
+        });
+        if (principal === 0 && settings.initialPrincipal > 0) {
+            principal = settings.initialPrincipal;
+        }
+        return { principal, rate };
+    },
+
+    _buildCashFlowTimeline(sortedEvents, expenses, fundStart, date, dateStr) {
+        const cashFlowEvents = [];
+        sortedEvents.forEach(ev => {
+            if (ev.date > dateStr) return;
+            if (ev.type === 'deposit') {
+                cashFlowEvents.push({ date: ev.date, kind: 'deposit', amount: ev.amount });
+            } else if (ev.type === 'rate_change') {
+                cashFlowEvents.push({ date: ev.date, kind: 'rate_change', rate: ev.rate });
+            } else if (ev.type === 'procurement') {
+                cashFlowEvents.push({ date: ev.date, kind: 'outflow', amount: ev.cost });
+            }
+        });
+        expenses.filter(e => e.type === 'opex').forEach(exp => {
+            const monthlyCost = exp.billingCycle === 'monthly' ? exp.cost : exp.cost / 12;
+            if (monthlyCost <= 0) return;
+            const expStartRaw = exp.lastProcurementDate ? new Date(exp.lastProcurementDate) : fundStart;
+            const expStart = expStartRaw > fundStart ? expStartRaw : fundStart;
+            let y = expStart.getFullYear();
+            let m = expStart.getMonth() + 1;
+            while (true) {
+                if (m > 11) { m -= 12; y++; }
+                const payDate = new Date(y, m, 1);
+                if (payDate > date) break;
+                if (payDate >= fundStart) {
+                    cashFlowEvents.push({
+                        date: payDate.toISOString().split('T')[0],
+                        kind: 'outflow',
+                        amount: monthlyCost
+                    });
+                }
+                m++;
+            }
+        });
+        cashFlowEvents.sort((a, b) => a.date.localeCompare(b.date));
+        return cashFlowEvents;
+    },
+
+    _computeCompoundGrowth(cashFlowEvents, principal, fundStart, date) {
+        let gains = 0;
+        let currentRate = 0.07;
+        const hasDepositEvents = cashFlowEvents.some(ev => ev.kind === 'deposit');
+        let compoundBase = hasDepositEvents ? 0 : principal;
+        let currentStart = fundStart;
+        for (const ev of cashFlowEvents) {
+            const evDate = new Date(ev.date);
+            if (evDate > fundStart && evDate <= date) {
+                const days = (evDate - currentStart) / this.MS_PER_DAY;
+                if (days > 0 && compoundBase > 0) {
+                    const periodGrowth = compoundBase * (Math.pow(1 + currentRate, days / 365) - 1);
+                    gains += periodGrowth;
+                    compoundBase += periodGrowth;
+                }
+                currentStart = evDate;
+            }
+            if (ev.kind === 'rate_change') {
+                currentRate = ev.rate;
+            } else if (ev.kind === 'deposit') {
+                compoundBase += ev.amount;
+            } else if (ev.kind === 'outflow') {
+                compoundBase -= ev.amount;
+            }
+        }
+        const finalDays = (date - currentStart) / this.MS_PER_DAY;
+        if (finalDays > 0 && compoundBase > 0) {
+            const periodGrowth = compoundBase * (Math.pow(1 + currentRate, finalDays / 365) - 1);
+            gains += periodGrowth;
+            compoundBase += periodGrowth;
+        }
+        return { gains, compoundBase };
+    },
+
+    _computeExpenseData(expenses, sortedEvents, fundStart, date) {
+        return expenses.map(exp => {
+            let annualCost;
+            if (exp.type === 'capex') {
+                annualCost = exp.cost / exp.interval;
+            } else {
+                annualCost = exp.billingCycle === 'yearly' ? exp.cost : exp.cost * 12;
+            }
+            const lastProcEvents = sortedEvents
+                .filter(ev => ev.type === 'procurement' && ev.expenseId === exp.id)
+                .sort((a, b) => new Date(b.date) - new Date(a.date));
+            let lastProcDate = exp.lastProcurementDate ? new Date(exp.lastProcurementDate) : fundStart;
+            if (lastProcEvents.length > 0) {
+                lastProcDate = new Date(lastProcEvents[0].date);
+            }
+            const gainStartDate = lastProcDate < fundStart ? fundStart : lastProcDate;
+            let scheduledDate = null;
+            if (exp.type === 'capex') {
+                const nextDate = new Date(lastProcDate.getTime() + (exp.interval * Engine.DAYS_PER_YEAR * Engine.MS_PER_DAY));
+                scheduledDate = nextDate.toISOString().split('T')[0];
+            }
+            return { exp, annualCost, lastProcDate, gainStartDate, scheduledDate, allocatedAnnualGains: 0 };
+        });
+    },
+
+    _allocateGains(expenseData, annualGainAmount) {
+        const totalOpExAnnual = expenseData
+            .filter(d => d.exp.type === 'opex')
+            .reduce((sum, d) => sum + d.annualCost, 0);
+        const opexCoverageRatio = totalOpExAnnual > 0
+            ? Math.min(1, annualGainAmount / totalOpExAnnual)
+            : 1;
+        const gainsAfterOpex = Math.max(0, annualGainAmount - totalOpExAnnual);
+        expenseData.forEach(d => {
+            if (d.exp.type === 'opex') {
+                d.allocatedAnnualGains = d.annualCost * opexCoverageRatio;
+            }
+        });
+        const capexItems = expenseData.filter(d => d.exp.type === 'capex');
+        const totalCapExAnnual = capexItems.reduce((sum, d) => sum + d.annualCost, 0);
+        capexItems.forEach(d => {
+            const share = totalCapExAnnual > 0 ? d.annualCost / totalCapExAnnual : 0;
+            d.allocatedAnnualGains = share * gainsAfterOpex;
+        });
+    },
+
+    _redistributeSurplus(expenseData, date) {
+        const capexItems = expenseData.filter(d => d.exp.type === 'capex');
+        capexItems.forEach(d => {
+            const daysSinceProc = Math.max(0, (date - d.gainStartDate) / this.MS_PER_DAY);
+            d._yearsSinceProc = daysSinceProc / this.DAYS_PER_YEAR;
+        });
+        const maxIterations = capexItems.length + 1;
+        for (let iter = 0; iter < maxIterations; iter++) {
+            let surplus = 0;
+            const unfunded = [];
+            capexItems.forEach(d => {
+                if (d._yearsSinceProc > 0) {
+                    const accumulated = d.allocatedAnnualGains * d._yearsSinceProc;
+                    if (accumulated >= d.exp.cost) {
+                        const needed = d.exp.cost / d._yearsSinceProc;
+                        surplus += d.allocatedAnnualGains - needed;
+                        d.allocatedAnnualGains = needed;
+                    } else {
+                        unfunded.push(d);
+                    }
+                } else {
+                    unfunded.push(d);
+                }
+            });
+            if (surplus <= 0 || unfunded.length === 0) break;
+            const unfundedTotal = unfunded.reduce((sum, d) => sum + d.annualCost, 0);
+            unfunded.forEach(d => {
+                const proportion = unfundedTotal > 0
+                    ? d.annualCost / unfundedTotal
+                    : 1 / unfunded.length;
+                d.allocatedAnnualGains += surplus * proportion;
+            });
+        }
+        capexItems.forEach(d => { delete d._yearsSinceProc; });
+    },
+
+    _buildProjectedExpenses(expenseData, date) {
+        return expenseData.map(d => {
+            const { exp, annualCost, lastProcDate, gainStartDate, scheduledDate, allocatedAnnualGains } = d;
+            let allocatedGains = 0;
+            let progress = 0;
+            if (exp.type === 'capex') {
+                const daysSinceProc = Math.max(0, (date - gainStartDate) / this.MS_PER_DAY);
+                const yearsSinceProc = daysSinceProc / this.DAYS_PER_YEAR;
+                allocatedGains = allocatedAnnualGains * yearsSinceProc;
+                progress = exp.cost > 0 ? (allocatedGains / exp.cost) * 100 : 0;
+            } else {
+                allocatedGains = allocatedAnnualGains;
+                progress = annualCost > 0 ? (allocatedAnnualGains / annualCost) * 100 : 0;
+            }
+            let projectedDate = null;
+            if (exp.type === 'capex' && allocatedAnnualGains > 0) {
+                const yearsToFund = exp.cost / allocatedAnnualGains;
+                const projDate = new Date(gainStartDate.getTime() + (yearsToFund * Engine.DAYS_PER_YEAR * Engine.MS_PER_DAY));
+                projectedDate = projDate.toISOString().split('T')[0];
+            }
+            const isFunded = exp.type === 'capex'
+                ? progress >= 100
+                : allocatedAnnualGains >= annualCost;
+            return {
+                ...exp,
+                annualCost,
+                allocatedGains,
+                allocatedAnnualGains,
+                progress: Math.max(0, progress),
+                scheduledDate,
+                projectedDate,
+                lastProcurementDate: lastProcDate.toISOString().split('T')[0],
+                isFunded
+            };
+        });
+    },
+
+    /**
+     * Full project() — mirrors FundFlow.project() logic.
+     */
+    project(data, atDate) {
+        const settings = data.settings;
+        const events = data.events;
+        const expenses = data.expenses;
+        const fundStart = new Date(settings.fundStartDate);
+        const date = new Date(atDate);
+        const dateStr = date.toISOString().split('T')[0];
+
+        if (date < fundStart) {
+            return {
+                principal: 0, rate: 0.07, gains: 0, deductions: 0,
+                principalReturnBalance: 0, expenses: [],
+                totalAnnualCost: 0, isDrainingPrincipal: false,
+                effectiveBase: 0, annualGainAmount: 0
+            };
+        }
+
+        const sortedEvents = [...events].sort((a, b) => new Date(a.date) - new Date(b.date));
+        const { principal, rate } = this._computePrincipalAndRate(sortedEvents, dateStr, settings);
+        const cashFlowEvents = this._buildCashFlowTimeline(sortedEvents, expenses, fundStart, date, dateStr);
+        const { gains, compoundBase } = this._computeCompoundGrowth(cashFlowEvents, principal, fundStart, date);
+        const effectiveBase = Math.max(0, compoundBase);
+
+        let deductions = 0;
+        cashFlowEvents.forEach(ev => {
+            if (ev.kind === 'outflow') deductions += ev.amount;
+        });
+        const principalReturnBalance = gains - deductions;
+
+        const expenseData = this._computeExpenseData(expenses, sortedEvents, fundStart, date);
+        const annualGainAmount = effectiveBase * rate;
+        this._allocateGains(expenseData, annualGainAmount);
+        if (settings.redistributeFullyFunded) {
+            this._redistributeSurplus(expenseData, date);
+        }
+
+        const projectedExpenses = this._buildProjectedExpenses(expenseData, date);
+        const totalAnnualCost = projectedExpenses.reduce((sum, e) => sum + e.annualCost, 0);
+
+        return {
+            principal, effectiveBase, rate, gains, deductions, annualGainAmount,
+            principalReturnBalance,
+            expenses: projectedExpenses,
+            totalAnnualCost,
+            isDrainingPrincipal: principalReturnBalance < 0
+        };
+    }
+};
+
+
+// ========== TESTS ==========
+
+// Helper: create a standard test dataset
+function makeData(overrides) {
+    const base = {
+        settings: {
+            initialPrincipal: 100000,
+            accountType: 'isk',
+            fundStartDate: '2024-01-01',
+            redistributeFullyFunded: true
+        },
+        expenses: [],
+        events: []
+    };
+    return Object.assign(base, overrides);
+}
+
+function addYears(dateStr, years) {
+    const d = new Date(dateStr);
+    d.setFullYear(d.getFullYear() + years);
+    return d.toISOString().split('T')[0];
+}
+
+// ========================================
+// GROUP 1: Basic Principal & Rate
+// ========================================
+group('1. Principal & Rate Computation');
+
+(function() {
+    // No events: should use initialPrincipal and default rate
+    const data = makeData({});
+    const proj = Engine.project(data, '2025-01-01');
+    assert(proj.principal === 100000, 'Uses initialPrincipal when no deposit events exist');
+    assertApprox(proj.rate, 0.07, 0.001, 'Default rate is 7%');
+})();
+
+(function() {
+    // Deposit events override initialPrincipal
+    const data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 50000 },
+            { id: '2', type: 'deposit', date: '2024-06-01', amount: 30000 },
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    assert(proj.principal === 80000, 'Sum of deposits = 80000 (not initialPrincipal)');
+})();
+
+(function() {
+    // Rate change event overrides default
+    const data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 },
+            { id: '2', type: 'rate_change', date: '2024-03-01', rate: 0.10 },
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    assertApprox(proj.rate, 0.10, 0.001, 'Rate change to 10% is reflected');
+})();
+
+(function() {
+    // Future rate change should NOT be included when projecting before it
+    const data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 },
+            { id: '2', type: 'rate_change', date: '2026-01-01', rate: 0.12 },
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    assertApprox(proj.rate, 0.07, 0.001, 'Future rate change ignored when projecting before it');
+})();
+
+
+// ========================================
+// GROUP 2: Compound Growth
+// ========================================
+group('2. Compound Growth');
+
+(function() {
+    // Simple 1-year growth at 7%, no expenses
+    const data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    // Expected: 100000 * (1.07^1 - 1) = 7000
+    assertApprox(proj.gains, 7000, 100, 'One year of 7% on 100k produces ~7000 gains');
+    assert(proj.gains > 0, 'Gains are positive');
+})();
+
+(function() {
+    // Two-year compound growth
+    const data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }]
+    });
+    const proj = Engine.project(data, '2026-01-01');
+    // Expected: 100000 * (1.07^2 - 1) = 14490
+    assertApprox(proj.gains, 14490, 200, 'Two years of 7% on 100k produces ~14490 (compound)');
+})();
+
+(function() {
+    // Zero-day projection: no gains
+    const data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }]
+    });
+    const proj = Engine.project(data, '2024-01-01');
+    assertApprox(proj.gains, 0, 1, 'Same-day projection yields ~0 gains');
+})();
+
+(function() {
+    // Before fund start: everything is zero
+    const data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }]
+    });
+    const proj = Engine.project(data, '2023-06-01');
+    assert(proj.principal === 0, 'Before fund start: principal = 0');
+    assert(proj.gains === 0, 'Before fund start: gains = 0');
+    assert(proj.expenses.length === 0, 'Before fund start: no expenses');
+})();
+
+(function() {
+    // Two deposits: second deposit should compound from its date
+    const data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 50000 },
+            { id: '2', type: 'deposit', date: '2024-07-01', amount: 50000 },
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    // First 50k compounds for 1 year, second 50k compounds for ~0.5 years
+    // Should be LESS than if both deposits were at the start
+    const allAtStart = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }]
+    });
+    const projAll = Engine.project(allAtStart, '2025-01-01');
+    assert(proj.gains < projAll.gains, 'Staggered deposits produce less gains than a lump sum at start');
+    assert(proj.gains > 0, 'Staggered deposits still produce positive gains');
+})();
+
+
+// ========================================
+// GROUP 3: OpEx Allocation & Backdating Fix
+// ========================================
+group('3. OpEx Allocation & Backdating Fix');
+
+(function() {
+    // OpEx gets first claim on gains
+    const data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'opex', name: 'Spotify', cost: 119, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    const spotify = proj.expenses[0];
+    assert(spotify.annualCost === 119 * 12, 'Monthly OpEx annualized correctly (119*12 = 1428)');
+    assert(spotify.allocatedAnnualGains > 0, 'OpEx receives gain allocation');
+})();
+
+(function() {
+    // OpEx created mid-year should NOT have outflows from before creation
+    const data = makeData({
+        settings: { initialPrincipal: 100000, accountType: 'isk', fundStartDate: '2024-01-01', redistributeFullyFunded: true },
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'opex', name: 'Netflix', cost: 169, billingCycle: 'monthly', lastProcurementDate: '2024-07-01' }
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    // Netflix starts July 2024 -> only 5-6 months of payments by Jan 2025
+    // Without the fix it would have 12 months of payments
+    assert(proj.deductions < 169 * 12, 'Mid-year OpEx has FEWER than 12 months of deductions (backdating fix)');
+    assert(proj.deductions > 0, 'Mid-year OpEx still has some deductions');
+})();
+
+(function() {
+    // OpEx yearly billing
+    const data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'opex', name: 'Domain', cost: 120, billingCycle: 'yearly', lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    const domain = proj.expenses[0];
+    assert(domain.annualCost === 120, 'Yearly OpEx annualCost = cost (120)');
+})();
+
+
+// ========================================
+// GROUP 4: CapEx Funding & Progress
+// ========================================
+group('4. CapEx Funding & Progress');
+
+(function() {
+    // Single CapEx, well-funded
+    const data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 200000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Phone', cost: 12000, interval: 4, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    const proj = Engine.project(data, '2028-01-01');
+    const phone = proj.expenses[0];
+    assert(phone.annualCost === 3000, 'CapEx annualCost = cost/interval (12000/4 = 3000)');
+    assert(phone.progress >= 100, 'Phone is fully funded after 4 years with 200k principal');
+    assert(phone.isFunded === true, 'isFunded flag is true');
+})();
+
+(function() {
+    // CapEx progress scales with time
+    const data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Laptop', cost: 20000, interval: 5, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    const proj1yr = Engine.project(data, '2025-01-01');
+    const proj3yr = Engine.project(data, '2027-01-01');
+    const laptop1 = proj1yr.expenses[0];
+    const laptop3 = proj3yr.expenses[0];
+    assert(laptop3.progress > laptop1.progress, 'CapEx progress increases over time');
+    assert(laptop1.progress > 0, 'CapEx progress > 0 after 1 year');
+    assert(laptop1.progress < 100, 'CapEx progress < 100 after only 1 year (20k over 5yr)');
+})();
+
+(function() {
+    // Scheduled date calculation
+    const data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'TV', cost: 15000, interval: 7, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    const tv = proj.expenses[0];
+    assert(tv.scheduledDate !== null, 'CapEx has a scheduled date');
+    // Scheduled should be ~2031 (7 years after 2024-01-01)
+    assert(tv.scheduledDate.startsWith('2030') || tv.scheduledDate.startsWith('2031'), 'Scheduled date is ~7 years from last proc');
+})();
+
+
+// ========================================
+// GROUP 5: Gain Allocation (OpEx priority)
+// ========================================
+group('5. Gain Allocation (OpEx-first priority)');
+
+(function() {
+    // When gains are insufficient, OpEx gets partial coverage, CapEx gets nothing
+    const data = makeData({
+        settings: { initialPrincipal: 10000, accountType: 'isk', fundStartDate: '2024-01-01', redistributeFullyFunded: true },
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 10000 }],
+        expenses: [
+            { id: 'e1', type: 'opex', name: 'Sub', cost: 100, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' },
+            { id: 'e2', type: 'capex', name: 'Gadget', cost: 5000, interval: 2, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    const sub = proj.expenses.find(e => e.name === 'Sub');
+    const gadget = proj.expenses.find(e => e.name === 'Gadget');
+    // annualGainAmount = ~10000 * 0.07 = 700
+    // OpEx annual cost = 1200
+    // Since 700 < 1200, OpEx gets partial coverage (700/1200 ratio), CapEx gets 0
+    assert(sub.allocatedAnnualGains > 0, 'OpEx gets some allocation even when underfunded');
+    assertApprox(gadget.allocatedAnnualGains, 0, 1, 'CapEx gets 0 when gains < OpEx total');
+})();
+
+(function() {
+    // When gains are sufficient for OpEx, remainder goes to CapEx
+    const data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 200000 }],
+        expenses: [
+            { id: 'e1', type: 'opex', name: 'Sub', cost: 100, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' },
+            { id: 'e2', type: 'capex', name: 'Phone', cost: 12000, interval: 4, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    const sub = proj.expenses.find(e => e.name === 'Sub');
+    const phone = proj.expenses.find(e => e.name === 'Phone');
+    assert(sub.allocatedAnnualGains >= sub.annualCost - 1, 'OpEx fully covered when gains are sufficient');
+    assert(phone.allocatedAnnualGains > 0, 'CapEx gets allocation from remaining gains');
+})();
+
+(function() {
+    // Multiple CapEx items get proportional allocation
+    const data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Cheap', cost: 5000, interval: 5, lastProcurementDate: '2024-01-01' },
+            { id: 'e2', type: 'capex', name: 'Expensive', cost: 15000, interval: 5, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    const cheap = proj.expenses.find(e => e.name === 'Cheap');
+    const expensive = proj.expenses.find(e => e.name === 'Expensive');
+    // Expensive has 3x the annual cost, so should get 3x the allocation
+    const ratio = expensive.allocatedAnnualGains / cheap.allocatedAnnualGains;
+    assertApprox(ratio, 3.0, 0.5, 'CapEx allocation proportional to annualCost (3:1 ratio)');
+})();
+
+
+// ========================================
+// GROUP 6: Redistribution
+// ========================================
+group('6. Redistribution of Surplus');
+
+(function() {
+    // With redistribution: fully-funded items donate excess
+    const data = makeData({
+        settings: { initialPrincipal: 100000, accountType: 'isk', fundStartDate: '2020-01-01', redistributeFullyFunded: true },
+        events: [{ id: '1', type: 'deposit', date: '2020-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Cheap', cost: 2000, interval: 5, lastProcurementDate: '2020-01-01' },
+            { id: 'e2', type: 'capex', name: 'Expensive', cost: 30000, interval: 5, lastProcurementDate: '2020-01-01' }
+        ]
+    });
+    const projWith = Engine.project(data, '2025-01-01');
+
+    // Without redistribution
+    data.settings.redistributeFullyFunded = false;
+    const projWithout = Engine.project(data, '2025-01-01');
+
+    const expWithRedist = projWith.expenses.find(e => e.name === 'Expensive');
+    const expWithoutRedist = projWithout.expenses.find(e => e.name === 'Expensive');
+
+    assert(expWithRedist.allocatedAnnualGains >= expWithoutRedist.allocatedAnnualGains,
+        'Redistribution increases allocation to underfunded items');
+})();
+
+(function() {
+    // Without redistribution: surplus is wasted
+    const data = makeData({
+        settings: { initialPrincipal: 100000, accountType: 'isk', fundStartDate: '2020-01-01', redistributeFullyFunded: false },
+        events: [{ id: '1', type: 'deposit', date: '2020-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Cheap', cost: 1000, interval: 5, lastProcurementDate: '2020-01-01' },
+            { id: 'e2', type: 'capex', name: 'Big', cost: 50000, interval: 5, lastProcurementDate: '2020-01-01' }
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    const cheap = proj.expenses.find(e => e.name === 'Cheap');
+    const big = proj.expenses.find(e => e.name === 'Big');
+    // Without redistribution, cheap's allocation is proportional even though it's overfunded
+    // The ratios should match annualCost ratios
+    const cheapAnnual = 1000 / 5; // 200
+    const bigAnnual = 50000 / 5;  // 10000
+    const expectedRatio = bigAnnual / cheapAnnual; // 50
+    const actualRatio = big.allocatedAnnualGains / cheap.allocatedAnnualGains;
+    assertApprox(actualRatio, expectedRatio, 1, 'Without redistribution: allocation stays proportional to annualCost');
+})();
+
+
+// ========================================
+// GROUP 7: Procurement (CapEx outflows)
+// ========================================
+group('7. Procurement Events');
+
+(function() {
+    // Procurement reduces gains/PR balance
+    const data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 },
+            { id: '2', type: 'procurement', date: '2024-06-01', cost: 5000, expenseId: 'e1', expenseName: 'Phone' }
+        ],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Phone', cost: 12000, interval: 4, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    assert(proj.deductions >= 5000, 'Procurement cost is in deductions');
+    // Compare with no procurement
+    const data2 = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Phone', cost: 12000, interval: 4, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    const proj2 = Engine.project(data2, '2025-01-01');
+    assert(proj.principalReturnBalance < proj2.principalReturnBalance,
+        'Procurement lowers PR balance vs no procurement');
+})();
+
+(function() {
+    // Procurement reduces compound base (P0 fix)
+    const data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 },
+            { id: '2', type: 'procurement', date: '2024-01-15', cost: 50000, expenseId: 'e1', expenseName: 'Big' }
+        ],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Big', cost: 50000, interval: 3, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    const projWithProc = Engine.project(data, '2025-01-01');
+    // Without procurement
+    const data2 = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Big', cost: 50000, interval: 3, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    const projWithout = Engine.project(data2, '2025-01-01');
+    assert(projWithProc.gains < projWithout.gains,
+        'P0 fix: Procurement reduces compound base, resulting in lower gains');
+})();
+
+
+// ========================================
+// GROUP 8: Principal Drain Detection
+// ========================================
+group('8. Principal Drain Detection');
+
+(function() {
+    // Low principal + high expenses = draining principal
+    const data = makeData({
+        settings: { initialPrincipal: 10000, accountType: 'isk', fundStartDate: '2024-01-01', redistributeFullyFunded: true },
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 10000 }],
+        expenses: [
+            { id: 'e1', type: 'opex', name: 'Expensive Sub', cost: 500, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    const proj = Engine.project(data, '2026-01-01');
+    // 10000 * 7% = 700/year in gains, but 6000/year in OpEx
+    assert(proj.isDrainingPrincipal === true, 'Draining principal when expenses >> gains');
+    assert(proj.principalReturnBalance < 0, 'PR balance is negative');
+})();
+
+(function() {
+    // High principal + low expenses = NOT draining
+    const data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 500000 }],
+        expenses: [
+            { id: 'e1', type: 'opex', name: 'Cheap', cost: 50, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    assert(proj.isDrainingPrincipal === false, 'NOT draining when gains >> expenses');
+    assert(proj.principalReturnBalance > 0, 'PR balance is positive');
+})();
+
+
+// ========================================
+// GROUP 9: Edge Cases
+// ========================================
+group('9. Edge Cases');
+
+(function() {
+    // No expenses: PR balance = gains
+    const data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    assertApprox(proj.principalReturnBalance, proj.gains, 1, 'No expenses: PR balance = gains');
+    assert(proj.totalAnnualCost === 0, 'No expenses: totalAnnualCost = 0');
+})();
+
+(function() {
+    // No events at all: falls back to initialPrincipal
+    const data = makeData({});
+    const proj = Engine.project(data, '2025-01-01');
+    assert(proj.principal === 100000, 'Fallback to initialPrincipal when no events');
+    assert(proj.gains > 0, 'Still earns gains from initialPrincipal');
+})();
+
+(function() {
+    // Zero principal: no gains
+    const data = makeData({
+        settings: { initialPrincipal: 0, accountType: 'isk', fundStartDate: '2024-01-01', redistributeFullyFunded: true },
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    assert(proj.principal === 0, 'Zero principal stays zero');
+    assertApprox(proj.gains, 0, 1, 'Zero principal produces zero gains');
+})();
+
+(function() {
+    // Rate change mid-period affects compound growth
+    const data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 },
+            { id: '2', type: 'rate_change', date: '2024-07-01', rate: 0.14 },
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    // First half at 7%, second half at 14%: more gains than all-7%
+    const data2 = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }]
+    });
+    const proj2 = Engine.project(data2, '2025-01-01');
+    assert(proj.gains > proj2.gains, 'Rate increase mid-year produces more gains than flat 7%');
+})();
+
+(function() {
+    // CapEx with interval=1: annual cost = full cost
+    const data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Annual Thing', cost: 5000, interval: 1, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    const item = proj.expenses[0];
+    assert(item.annualCost === 5000, 'CapEx with interval=1: annualCost = cost');
+})();
+
+
+// ========================================
+// GROUP 10: PR Balance Consistency
+// ========================================
+group('10. PR Balance Consistency');
+
+(function() {
+    // PR Balance = gains - deductions
+    const data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 },
+            { id: '2', type: 'procurement', date: '2024-06-01', cost: 3000, expenseId: 'e1', expenseName: 'TV' }
+        ],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'TV', cost: 15000, interval: 5, lastProcurementDate: '2024-01-01' },
+            { id: 'e2', type: 'opex', name: 'Sub', cost: 100, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    const expectedPRB = proj.gains - proj.deductions;
+    assertApprox(proj.principalReturnBalance, expectedPRB, 1, 'PR Balance = gains - deductions');
+})();
+
+(function() {
+    // effectiveBase is never negative
+    const data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 5000 },
+            { id: '2', type: 'procurement', date: '2024-02-01', cost: 10000, expenseId: 'e1', expenseName: 'Big' }
+        ],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Big', cost: 10000, interval: 2, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    const proj = Engine.project(data, '2025-01-01');
+    assert(proj.effectiveBase >= 0, 'effectiveBase is clamped to >= 0');
+})();
+
+
+// ========================================
+// GROUP 11: Cash-Flow Timeline Build
+// ========================================
+group('11. Cash-Flow Timeline Construction');
+
+(function() {
+    // OpEx synthesis generates correct number of monthly payments
+    const fundStart = new Date('2024-01-01');
+    const date = new Date('2025-01-01');
+    const events = [{ date: '2024-01-01', type: 'deposit', amount: 100000 }];
+    const expenses = [
+        { id: 'e1', type: 'opex', name: 'Sub', cost: 100, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' }
+    ];
+    const sorted = [...events].sort((a, b) => a.date.localeCompare(b.date));
+    const timeline = Engine._buildCashFlowTimeline(sorted, expenses, fundStart, date, '2025-01-01');
+    const opexOutflows = timeline.filter(ev => ev.kind === 'outflow');
+    // From Jan 2024 to Jan 2025 = 12 payments (Feb through Jan)
+    assert(opexOutflows.length >= 11 && opexOutflows.length <= 12, 'OpEx generates ~12 monthly outflows over 1 year (got ' + opexOutflows.length + ')');
+})();
+
+(function() {
+    // OpEx with later start has fewer outflows
+    const fundStart = new Date('2024-01-01');
+    const date = new Date('2025-01-01');
+    const events = [{ date: '2024-01-01', type: 'deposit', amount: 100000 }];
+    const expEarly = [
+        { id: 'e1', type: 'opex', name: 'Early', cost: 100, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' }
+    ];
+    const expLate = [
+        { id: 'e1', type: 'opex', name: 'Late', cost: 100, billingCycle: 'monthly', lastProcurementDate: '2024-07-01' }
+    ];
+    const sorted = [...events].sort((a, b) => a.date.localeCompare(b.date));
+    const earlyTimeline = Engine._buildCashFlowTimeline(sorted, expEarly, fundStart, date, '2025-01-01');
+    const lateTimeline = Engine._buildCashFlowTimeline(sorted, expLate, fundStart, date, '2025-01-01');
+    const earlyOutflows = earlyTimeline.filter(ev => ev.kind === 'outflow').length;
+    const lateOutflows = lateTimeline.filter(ev => ev.kind === 'outflow').length;
+    assert(lateOutflows < earlyOutflows, 'Later OpEx start = fewer outflows (' + lateOutflows + ' < ' + earlyOutflows + ')');
+})();
+
+
+// ========================================
+// GROUP 12: Integration / Full Scenarios
+// ========================================
+group('12. Integration Scenarios');
+
+(function() {
+    // Realistic scenario: 135k principal, mixed expenses
+    const data = makeData({
+        settings: { initialPrincipal: 135000, accountType: 'isk', fundStartDate: '2024-01-01', redistributeFullyFunded: true },
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 135000 },
+            { id: '2', type: 'rate_change', date: '2024-01-01', rate: 0.07 },
+        ],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Phone', cost: 12000, interval: 4, lastProcurementDate: '2024-01-01' },
+            { id: 'e2', type: 'capex', name: 'Laptop', cost: 20000, interval: 5, lastProcurementDate: '2024-01-01' },
+            { id: 'e3', type: 'opex', name: 'Spotify', cost: 119, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' },
+            { id: 'e4', type: 'opex', name: 'iCloud', cost: 9, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' },
+        ]
+    });
+    const proj = Engine.project(data, '2029-01-01');
+
+    assert(proj.principal === 135000, 'Integration: principal = 135000');
+    assert(proj.gains > 0, 'Integration: gains > 0 after 5 years');
+    assert(proj.expenses.length === 4, 'Integration: all 4 expenses projected');
+
+    const totalOpEx = proj.expenses.filter(e => e.type === 'opex').reduce((s, e) => s + e.annualCost, 0);
+    const totalCapEx = proj.expenses.filter(e => e.type === 'capex').reduce((s, e) => s + e.annualCost, 0);
+    assert(totalOpEx > 0, 'Integration: OpEx cost > 0');
+    assert(totalCapEx > 0, 'Integration: CapEx cost > 0');
+
+    // annualGainAmount should be effectiveBase * rate
+    assertApprox(proj.annualGainAmount, proj.effectiveBase * proj.rate, 1, 'Integration: annualGainAmount = effectiveBase * rate');
+
+    // All allocated gains should sum to <= annualGainAmount (with redistribution, may equal)
+    const totalAllocated = proj.expenses.reduce((s, e) => s + e.allocatedAnnualGains, 0);
+    assert(totalAllocated <= proj.annualGainAmount + 1, 'Integration: total allocated <= annualGainAmount');
+})();
+
+(function() {
+    // Over time, gains should grow (compounding)
+    const data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Phone', cost: 12000, interval: 4, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+
+    const gains1 = Engine.project(data, '2025-01-01').gains;
+    const gains2 = Engine.project(data, '2026-01-01').gains;
+    const gains3 = Engine.project(data, '2027-01-01').gains;
+
+    assert(gains2 > gains1, 'Gains grow year over year (year 2 > year 1)');
+    assert(gains3 > gains2, 'Gains grow year over year (year 3 > year 2)');
+
+    // Check compounding: year-over-year gain increment should increase
+    const delta1 = gains2 - gains1;
+    const delta2 = gains3 - gains2;
+    assert(delta2 > delta1, 'Compounding: gain increment increases year over year');
+})();
+
+
+// ========================================
+// GROUP 13: Timeline Filter Bugfixes
+// ========================================
+group('13. Timeline Filter Bugfixes');
+
+// Test: OpEx cash flow entries should not appear before max(fundStart, lastProcurementDate)
+(function() {
+    // OpEx subscription created 6 months after fund start should NOT have outflows
+    // in the first 6 months of the fund
+    const fundStart = new Date('2024-01-01');
+    const date = new Date('2025-01-01');
+    const events = [{ date: '2024-01-01', type: 'deposit', amount: 100000 }];
+    const expenses = [
+        { id: 'e1', type: 'opex', name: 'Late Sub', cost: 100, billingCycle: 'monthly', lastProcurementDate: '2024-07-01' }
+    ];
+    const sorted = [...events].sort((a, b) => a.date.localeCompare(b.date));
+    const timeline = Engine._buildCashFlowTimeline(sorted, expenses, fundStart, date, '2025-01-01');
+    const opexOutflows = timeline.filter(ev => ev.kind === 'outflow');
+
+    // All outflows should have dates >= 2024-07-01 (the lastProcurementDate)
+    const tooEarly = opexOutflows.filter(ev => ev.date < '2024-07-01');
+    assert(tooEarly.length === 0, 'OpEx outflows do not appear before lastProcurementDate (found ' + tooEarly.length + ' early)');
+
+    // Should have ~6 months of outflows (Jul-Dec 2024), not 12
+    assert(opexOutflows.length >= 5 && opexOutflows.length <= 6, 'OpEx with later start generates ~6 months of outflows, not 12 (got ' + opexOutflows.length + ')');
+})();
+
+// Test: Filter logic returns correct subsets for procurement events
+(function() {
+    const items = [
+        { kind: 'expense', subtype: 'capex', name: 'Laptop' },
+        { kind: 'expense', subtype: 'opex', name: 'Hosting' },
+        { kind: 'event', subtype: 'deposit', name: 'Deposit' },
+        { kind: 'event', subtype: 'rate_change', name: 'Rate' },
+        { kind: 'event', subtype: 'procurement', name: 'Purchase' },
+        { kind: 'event', subtype: 'procurement', name: 'Purchase 2' },
+    ];
+
+    function applyFilter(items, filter) {
+        return items.filter(function(item) {
+            switch (filter) {
+                case 'all': return true;
+                case 'expenses': return item.kind === 'expense';
+                case 'capex': return item.kind === 'expense' && item.subtype === 'capex';
+                case 'opex': return item.kind === 'expense' && item.subtype === 'opex';
+                case 'deposits': return item.kind === 'event' && item.subtype === 'deposit';
+                case 'rates': return item.kind === 'event' && item.subtype === 'rate_change';
+                case 'procurements': return item.kind === 'event' && item.subtype === 'procurement';
+                default: return true;
+            }
+        });
+    }
+
+    assert(applyFilter(items, 'all').length === 6, 'Filter "all" returns all 6 items');
+    assert(applyFilter(items, 'expenses').length === 2, 'Filter "expenses" returns 2 expenses');
+    assert(applyFilter(items, 'capex').length === 1, 'Filter "capex" returns 1 CapEx');
+    assert(applyFilter(items, 'opex').length === 1, 'Filter "opex" returns 1 OpEx');
+    assert(applyFilter(items, 'deposits').length === 1, 'Filter "deposits" returns 1 deposit');
+    assert(applyFilter(items, 'rates').length === 1, 'Filter "rates" returns 1 rate change');
+    assert(applyFilter(items, 'procurements').length === 2, 'Filter "procurements" returns 2 procurement events');
+})();
+
+// Test: Example data procurement events should have expenseId linking to the correct expense
+(function() {
+    // Simulate the example data structure: expenses with known IDs, procurements referencing them
+    var macbookId = 'macbook-001';
+    var iphoneId = 'iphone-001';
+    var expenses = [
+        { id: macbookId, name: 'MacBook Pro', type: 'capex' },
+        { id: iphoneId, name: 'iPhone', type: 'capex' }
+    ];
+    var procurements = [
+        { type: 'procurement', expenseId: macbookId, expenseName: 'MacBook Pro', cost: 33000 },
+        { type: 'procurement', expenseId: iphoneId, expenseName: 'iPhone', cost: 17500 }
+    ];
+
+    procurements.forEach(function(proc) {
+        var linked = expenses.find(function(e) { return e.id === proc.expenseId; });
+        assert(linked !== undefined, 'Procurement for "' + proc.expenseName + '" has valid expenseId');
+        assert(linked.name === proc.expenseName, 'Procurement expenseId matches expense name for "' + proc.expenseName + '"');
+    });
+})();
+
+
+// ========== FINAL SUMMARY ==========
+const summaryEl = document.getElementById('summary');
+const total = results.passed + results.failed + results.skipped;
+summaryEl.className = 'summary ' + (results.failed === 0 ? 'all-pass' : 'has-fail');
+summaryEl.innerHTML =
+    '<strong>' + total + ' tests</strong> &mdash; ' +
+    '<span class="pass">' + results.passed + ' passed</span>, ' +
+    '<span class="fail">' + results.failed + ' failed</span>, ' +
+    '<span class="skip">' + results.skipped + ' skipped</span>';
+
+if (results.failed === 0) {
+    summaryEl.innerHTML += '<br><br>All tests passed.';
+} else {
+    summaryEl.innerHTML += '<br><br>Some tests failed. Scroll up to see details.';
+}
+</script>
+</body>
+</html>

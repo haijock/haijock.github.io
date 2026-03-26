@@ -422,6 +422,17 @@
             font-size: 0.6rem; font-family: var(--font-mono);
         }
         .filter-tab.active .count { background: rgba(255,255,255,0.08); }
+        .filter-tab[data-filter="all"]:not(.active) {
+            border: 1px dashed var(--border); padding: 4px 9px;
+        }
+        @keyframes filter-shake {
+            0%, 100% { transform: translateX(0); }
+            20% { transform: translateX(-3px); }
+            40% { transform: translateX(3px); }
+            60% { transform: translateX(-2px); }
+            80% { transform: translateX(2px); }
+        }
+        .filter-tab.shake { animation: filter-shake 0.3s ease; }
 
         .fund-settings-row {
             display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
@@ -741,16 +752,16 @@
 #vsel a:hover{background:#1e1e3a;color:#fff}
 #vsel .vsel-cur{color:#6fc;font-weight:600}
 </style>
-<details id="vsel"><summary>main</summary>
+<details id="vsel"><summary>dev/feature/combinable-filters</summary>
 <div class="vsel-dd">
 <div class="vsel-hd">current</div>
-<a href="./" class="vsel-cur">main</a>
+<a href="../../../">main</a>
 <hr class="vsel-hr">
 <div class="vsel-hd">releases</div>
-<a href="v1.6.0/">v1.6.0</a><a href="v1.5.0/">v1.5.0</a><a href="v1.4.0/">v1.4.0</a><a href="v1.3.1/">v1.3.1</a><a href="v1.3.0/">v1.3.0</a><a href="v1.2.1/">v1.2.1</a><a href="v1.2.0/">v1.2.0</a><a href="v1.1.0/">v1.1.0</a><a href="v1.0.0/">v1.0.0</a><a href="v0.1.0/">v0.1.0</a>
+<a href="../../../v1.6.0/">v1.6.0</a><a href="../../../v1.5.0/">v1.5.0</a><a href="../../../v1.4.0/">v1.4.0</a><a href="../../../v1.3.1/">v1.3.1</a><a href="../../../v1.3.0/">v1.3.0</a><a href="../../../v1.2.1/">v1.2.1</a><a href="../../../v1.2.0/">v1.2.0</a><a href="../../../v1.1.0/">v1.1.0</a><a href="../../../v1.0.0/">v1.0.0</a><a href="../../../v0.1.0/">v0.1.0</a>
 <hr class="vsel-hr">
 <div class="vsel-hd">development</div>
-<a href="dev/feature/annual-summary/">dev/feature/annual-summary</a><a href="dev/feature/combinable-filters/">dev/feature/combinable-filters</a><a href="dev/feature/expense-growth-simulator/">dev/feature/expense-growth-simulator</a><a href="dev/feature/mc-debounce/">dev/feature/mc-debounce</a><a href="dev/feature/sustainability-gauge/">dev/feature/sustainability-gauge</a><a href="dev/feature/what-if-scenarios/">dev/feature/what-if-scenarios</a><a href="dev/onboard/combo-wizard-states/">dev/onboard/combo-wizard-states</a><a href="dev/onboard/guided-walkthrough/">dev/onboard/guided-walkthrough</a><a href="dev/onboard/learn-by-doing/">dev/onboard/learn-by-doing</a><a href="dev/onboard/smart-empty-states/">dev/onboard/smart-empty-states</a>
+<a href="../../../dev/feature/annual-summary/">dev/feature/annual-summary</a><a href="../../../dev/feature/combinable-filters/" class="vsel-cur">dev/feature/combinable-filters</a><a href="../../../dev/feature/expense-growth-simulator/">dev/feature/expense-growth-simulator</a><a href="../../../dev/feature/mc-debounce/">dev/feature/mc-debounce</a><a href="../../../dev/feature/sustainability-gauge/">dev/feature/sustainability-gauge</a><a href="../../../dev/feature/what-if-scenarios/">dev/feature/what-if-scenarios</a><a href="../../../dev/onboard/combo-wizard-states/">dev/onboard/combo-wizard-states</a><a href="../../../dev/onboard/guided-walkthrough/">dev/onboard/guided-walkthrough</a><a href="../../../dev/onboard/learn-by-doing/">dev/onboard/learn-by-doing</a><a href="../../../dev/onboard/smart-empty-states/">dev/onboard/smart-empty-states</a>
 </div>
 </details>
 <!-- /version-selector -->
@@ -910,12 +921,12 @@
                     <span class="list-title">Events &amp; Expenses</span>
                     <div class="filter-tabs" id="filterTabs">
                         <button class="filter-tab active" data-filter="all">All</button>
-                        <button class="filter-tab" data-filter="expenses">Expenses</button>
-                        <button class="filter-tab" data-filter="capex">CapEx</button>
-                        <button class="filter-tab" data-filter="opex">OpEx</button>
-                        <button class="filter-tab" data-filter="deposits">Deposits</button>
-                        <button class="filter-tab" data-filter="rates">Rates</button>
-                        <button class="filter-tab" data-filter="procurements">Procs</button>
+                        <button class="filter-tab active" data-filter="expenses">Expenses</button>
+                        <button class="filter-tab active" data-filter="capex">CapEx</button>
+                        <button class="filter-tab active" data-filter="opex">OpEx</button>
+                        <button class="filter-tab active" data-filter="deposits">Deposits</button>
+                        <button class="filter-tab active" data-filter="rates">Rates</button>
+                        <button class="filter-tab active" data-filter="procurements">Procs</button>
                     </div>
                 </div>
                 <div style="display: flex; gap: 6px;">

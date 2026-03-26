@@ -280,7 +280,7 @@ const FundFlow = {
     timelineDate: new Date(),
     editingEventId: null,
     editingExpenseId: null,
-    activeFilter: 'all',
+    activeFilters: { capex: true, opex: true, deposits: true, rates: true, procurements: true },
     _renderTimer: null,
 
     // ========== INIT ==========
@@ -511,12 +511,51 @@ const FundFlow = {
             });
         });
 
-        // Filter tabs
+        // Filter tabs (multi-select toggles)
         document.querySelectorAll('.filter-tab').forEach(tab => {
             tab.addEventListener('click', (e) => {
-                document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
-                e.target.classList.add('active');
-                this.activeFilter = e.target.dataset.filter;
+                const btn = e.currentTarget;
+                const f = btn.dataset.filter;
+                const af = this.activeFilters;
+
+                if (f === 'all') {
+                    // Reset: activate everything
+                    Object.keys(af).forEach(k => af[k] = true);
+                } else if (f === 'expenses') {
+                    // Group toggle: flip both capex and opex together
+                    const bothActive = af.capex && af.opex;
+                    if (bothActive) {
+                        // Turning off — check last-filter protection
+                        const othersActive = Object.entries(af)
+                            .filter(([k]) => k !== 'capex' && k !== 'opex')
+                            .some(([, v]) => v);
+                        if (!othersActive) {
+                            btn.classList.add('shake');
+                            btn.addEventListener('animationend', () => btn.classList.remove('shake'), { once: true });
+                            return;
+                        }
+                        af.capex = false;
+                        af.opex = false;
+                    } else {
+                        af.capex = true;
+                        af.opex = true;
+                    }
+                } else {
+                    // Individual toggle with last-filter protection
+                    if (af[f]) {
+                        const activeCount = Object.values(af).filter(Boolean).length;
+                        if (activeCount <= 1) {
+                            btn.classList.add('shake');
+                            btn.addEventListener('animationend', () => btn.classList.remove('shake'), { once: true });
+                            return;
+                        }
+                        af[f] = false;
+                    } else {
+                        af[f] = true;
+                    }
+                }
+
+                this._syncFilterTabUI();
                 this.renderUnifiedList();
             });
         });
@@ -1336,7 +1375,7 @@ const FundFlow = {
         if (!proj) proj = this.project(this.timelineDate);
 
         const container = document.getElementById('unifiedList');
-        const filter = this.activeFilter;
+        const af = this.activeFilters;
 
         // Build unified items array
         const items = [];
@@ -1368,18 +1407,11 @@ const FundFlow = {
             });
         });
 
-        // Apply filter
+        // Apply filter — multi-select: include item if its type's filter is active
+        const eventFilterKey = { deposit: 'deposits', rate_change: 'rates', procurement: 'procurements' };
         const filtered = items.filter(item => {
-            switch (filter) {
-                case 'all': return true;
-                case 'expenses': return item.kind === 'expense';
-                case 'capex': return item.kind === 'expense' && item.subtype === 'capex';
-                case 'opex': return item.kind === 'expense' && item.subtype === 'opex';
-                case 'deposits': return item.kind === 'event' && (item.subtype === 'deposit');
-                case 'rates': return item.kind === 'event' && item.subtype === 'rate_change';
-                case 'procurements': return item.kind === 'event' && item.subtype === 'procurement';
-                default: return true;
-            }
+            if (item.kind === 'expense') return !!af[item.subtype];
+            return !!af[eventFilterKey[item.subtype]];
         });
 
         // Sort: newest first
@@ -1393,7 +1425,8 @@ const FundFlow = {
         this.updateFilterCounts(items);
 
         if (filtered.length === 0) {
-            const msg = filter === 'all' ? 'No events or expenses yet' : 'No items match this filter';
+            const allActive = Object.values(af).every(Boolean);
+            const msg = allActive ? 'No events or expenses yet' : 'No items match the active filters';
             container.innerHTML = '<div class="empty-state">' + msg + '</div>';
             return;
         }
@@ -1456,6 +1489,21 @@ const FundFlow = {
             if (!child.getAttribute('data-item-key')) {
                 child.remove();
             }
+        });
+    },
+
+    _syncFilterTabUI() {
+        const af = this.activeFilters;
+        const allActive = Object.values(af).every(Boolean);
+        const expensesActive = af.capex && af.opex;
+
+        document.querySelectorAll('.filter-tab').forEach(tab => {
+            const f = tab.dataset.filter;
+            let active;
+            if (f === 'all') active = allActive;
+            else if (f === 'expenses') active = expensesActive;
+            else active = !!af[f];
+            tab.classList.toggle('active', active);
         });
     },
 
