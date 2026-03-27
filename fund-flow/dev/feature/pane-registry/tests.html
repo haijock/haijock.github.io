@@ -1,0 +1,1588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>FundFlow v2 — Test Harness</title>
+    <style>
+        body {
+            font-family: 'JetBrains Mono', 'Courier New', monospace;
+            background: #0a0a0f; color: #f4f4f5;
+            max-width: 900px; margin: 0 auto; padding: 24px;
+            font-size: 13px; line-height: 1.7;
+        }
+        h1 { color: #00d4aa; font-size: 1.3rem; margin-bottom: 16px; }
+        h2 { color: #7c3aed; font-size: 1rem; margin-top: 24px; margin-bottom: 8px; border-bottom: 1px solid #27272a; padding-bottom: 4px; }
+        .pass { color: #10b981; }
+        .fail { color: #ef4444; font-weight: bold; }
+        .skip { color: #f59e0b; }
+        .summary {
+            margin-top: 24px; padding: 16px; border-radius: 8px;
+            border: 1px solid #27272a; background: #12121a;
+            font-size: 1.1rem;
+        }
+        .summary.all-pass { border-color: #10b981; }
+        .summary.has-fail { border-color: #ef4444; }
+        .test-line { padding: 2px 0; }
+        .detail { color: #71717a; font-size: 12px; margin-left: 24px; }
+        .section-label {
+            display: inline-block; padding: 2px 8px; border-radius: 4px;
+            font-size: 11px; font-weight: 600; margin-bottom: 8px;
+        }
+        .section-engine { background: #1e1b4b; color: #818cf8; }
+        .section-ui { background: #1a2e05; color: #84cc16; }
+    </style>
+</head>
+<body>
+<h1>FundFlow v2 Test Harness</h1>
+<div id="output"></div>
+<div id="summary" class="summary">Loading...</div>
+
+<!-- Hidden iframe for UI tests — loads the real app with real Chart.js -->
+<iframe id="appFrame" src="about:blank" style="position:absolute;left:-9999px;width:1200px;height:800px;"></iframe>
+
+<!--
+    Chart.js stub: just enough for app.js to parse without errors.
+    app.js calls Chart.register() three times at parse time for its plugins.
+    We provide a minimal stub so those calls succeed. The engine tests never
+    render charts, so this is sufficient.
+-->
+<script>
+window.Chart = {
+    register: function() {},
+    defaults: { font: {} }
+};
+
+// Prevent FundFlow.init() from running: app.js registers a DOMContentLoaded
+// listener (line 3200) that calls init(), which tries to bind to DOM elements
+// that don't exist in the test page. We intercept that specific registration.
+(function() {
+    var origAdd = document.addEventListener.bind(document);
+    document.addEventListener = function(type, fn, opts) {
+        if (type === 'DOMContentLoaded') return; // swallow
+        return origAdd(type, fn, opts);
+    };
+})();
+</script>
+
+<!-- Load the real app.js — FundFlow becomes a global. The DOMContentLoaded
+     listener is intercepted above so init() never fires. Engine calculation
+     methods are available directly for testing. -->
+<script src="app.js"></script>
+
+<script>
+// Restore native addEventListener now that app.js has loaded
+document.addEventListener = EventTarget.prototype.addEventListener;
+</script>
+
+<script>
+/**
+ * FundFlow v2 Test Suite
+ *
+ * Part 1 (Groups 1-13): Engine calculation tests — calls FundFlow's methods
+ * directly with test fixtures. No DOM, no iframe, no Chart.js needed.
+ *
+ * Part 2 (Groups 14-23): UI interaction tests — loads index.html in a hidden
+ * iframe, stubs native dialogs, and exercises the full app via DOM manipulation.
+ */
+
+// ========== TEST FRAMEWORK ==========
+
+const results = { passed: 0, failed: 0, skipped: 0 };
+const outputEl = document.getElementById('output');
+let currentGroup = '';
+
+function group(name) {
+    currentGroup = name;
+    const h2 = document.createElement('h2');
+    h2.textContent = name;
+    outputEl.appendChild(h2);
+}
+
+function log(className, text) {
+    const div = document.createElement('div');
+    div.className = 'test-line';
+    div.innerHTML = '<span class="' + className + '">' + (className === 'pass' ? 'PASS' : className === 'fail' ? 'FAIL' : 'SKIP') + '</span> ' + text;
+    outputEl.appendChild(div);
+}
+
+function detail(text) {
+    const div = document.createElement('div');
+    div.className = 'detail';
+    div.textContent = text;
+    outputEl.appendChild(div);
+}
+
+function assert(condition, testName, details) {
+    if (condition) {
+        results.passed++;
+        log('pass', testName);
+    } else {
+        results.failed++;
+        log('fail', testName);
+        if (details) detail(details);
+    }
+}
+
+function assertApprox(actual, expected, tolerance, testName) {
+    const diff = Math.abs(actual - expected);
+    if (diff <= tolerance) {
+        results.passed++;
+        log('pass', testName);
+    } else {
+        results.failed++;
+        log('fail', testName);
+        detail('Expected ~' + expected.toFixed(2) + ' +/- ' + tolerance + ', got ' + actual.toFixed(2) + ' (diff: ' + diff.toFixed(4) + ')');
+    }
+}
+
+function skip(testName, reason) {
+    results.skipped++;
+    log('skip', testName + ' (' + reason + ')');
+}
+
+// ========== ASYNC HELPERS ==========
+
+function waitMs(ms) {
+    return new Promise(function(resolve) { setTimeout(resolve, ms); });
+}
+
+function waitFor(conditionFn, timeoutMs) {
+    timeoutMs = timeoutMs || 3000;
+    return new Promise(function(resolve, reject) {
+        var elapsed = 0;
+        var interval = 50;
+        function check() {
+            try {
+                if (conditionFn()) { resolve(); return; }
+            } catch (e) { /* condition threw, keep waiting */ }
+            elapsed += interval;
+            if (elapsed >= timeoutMs) {
+                reject(new Error('waitFor timed out after ' + timeoutMs + 'ms'));
+            } else {
+                setTimeout(check, interval);
+            }
+        }
+        check();
+    });
+}
+
+// ========== IFRAME HELPERS ==========
+
+var appFrame = document.getElementById('appFrame');
+
+function getWin() { return appFrame.contentWindow; }
+function getDoc() { return appFrame.contentDocument; }
+function getApp() { return getWin().FundFlow; }
+
+function iframeEl(selector) {
+    return getDoc().querySelector(selector);
+}
+
+function iframeEls(selector) {
+    return getDoc().querySelectorAll(selector);
+}
+
+function click(selector) {
+    var el = iframeEl(selector);
+    if (!el) throw new Error('click: element not found: ' + selector);
+    el.click();
+}
+
+function fill(selector, value) {
+    var el = iframeEl(selector);
+    if (!el) throw new Error('fill: element not found: ' + selector);
+    // Use the native setter from the iframe's own window context,
+    // not the test page's, to avoid cross-frame prototype mismatch.
+    var iframeWin = getWin();
+    var proto = (el instanceof iframeWin.HTMLTextAreaElement)
+        ? iframeWin.HTMLTextAreaElement.prototype
+        : iframeWin.HTMLInputElement.prototype;
+    var nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+    nativeSetter.call(el, value);
+    el.dispatchEvent(new iframeWin.Event('input', { bubbles: true }));
+    el.dispatchEvent(new iframeWin.Event('change', { bubbles: true }));
+}
+
+function selectVal(selector, value) {
+    var el = iframeEl(selector);
+    if (!el) throw new Error('selectVal: element not found: ' + selector);
+    var iframeWin = getWin();
+    el.value = value;
+    el.dispatchEvent(new iframeWin.Event('change', { bubbles: true }));
+}
+
+function getText(selector) {
+    var el = iframeEl(selector);
+    return el ? el.textContent.trim() : '';
+}
+
+function hasClass(selector, className) {
+    var el = iframeEl(selector);
+    return el ? el.classList.contains(className) : false;
+}
+
+function isVisible(selector) {
+    var el = iframeEl(selector);
+    if (!el) return false;
+    var style = getWin().getComputedStyle(el);
+    return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+}
+
+// ========== ENGINE TEST HELPERS ==========
+
+/**
+ * Create a test data fixture and temporarily set it on FundFlow,
+ * call project(), then restore the original data.
+ */
+function projectWith(data, atDate) {
+    var saved = FundFlow.data;
+    try {
+        FundFlow.data = data;
+        return FundFlow.project(atDate);
+    } finally {
+        FundFlow.data = saved;
+    }
+}
+
+function makeData(overrides) {
+    var base = {
+        settings: {
+            initialPrincipal: 100000,
+            accountType: 'isk',
+            fundStartDate: '2024-01-01',
+            redistributeFullyFunded: true
+        },
+        expenses: [],
+        events: []
+    };
+    return Object.assign(base, overrides);
+}
+
+function addYears(dateStr, years) {
+    var d = new Date(dateStr);
+    d.setFullYear(d.getFullYear() + years);
+    return d.toISOString().split('T')[0];
+}
+
+// ========== SECTION LABEL ==========
+function sectionLabel(text, cls) {
+    var span = document.createElement('div');
+    span.className = 'section-label ' + cls;
+    span.textContent = text;
+    outputEl.appendChild(span);
+}
+
+
+// ================================================================
+//  PART 1: ENGINE CALCULATION TESTS (Groups 1-13)
+//  These test FundFlow's actual methods — no Engine duplication.
+// ================================================================
+
+sectionLabel('ENGINE TESTS', 'section-engine');
+
+// ========================================
+// GROUP 1: Basic Principal & Rate
+// ========================================
+group('1. Principal & Rate Computation');
+
+(function() {
+    var data = makeData({});
+    var proj = projectWith(data, '2025-01-01');
+    assert(proj.principal === 100000, 'Uses initialPrincipal when no deposit events exist');
+    assertApprox(proj.rate, 0.07, 0.001, 'Default rate is 7%');
+})();
+
+(function() {
+    var data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 50000 },
+            { id: '2', type: 'deposit', date: '2024-06-01', amount: 30000 },
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    assert(proj.principal === 80000, 'Sum of deposits = 80000 (not initialPrincipal)');
+})();
+
+(function() {
+    var data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 },
+            { id: '2', type: 'rate_change', date: '2024-03-01', rate: 0.10 },
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    assertApprox(proj.rate, 0.10, 0.001, 'Rate change to 10% is reflected');
+})();
+
+(function() {
+    var data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 },
+            { id: '2', type: 'rate_change', date: '2026-01-01', rate: 0.12 },
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    assertApprox(proj.rate, 0.07, 0.001, 'Future rate change ignored when projecting before it');
+})();
+
+
+// ========================================
+// GROUP 2: Compound Growth
+// ========================================
+group('2. Compound Growth');
+
+(function() {
+    var data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    assertApprox(proj.gains, 7000, 100, 'One year of 7% on 100k produces ~7000 gains');
+    assert(proj.gains > 0, 'Gains are positive');
+})();
+
+(function() {
+    var data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }]
+    });
+    var proj = projectWith(data, '2026-01-01');
+    assertApprox(proj.gains, 14490, 200, 'Two years of 7% on 100k produces ~14490 (compound)');
+})();
+
+(function() {
+    var data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }]
+    });
+    var proj = projectWith(data, '2024-01-01');
+    assertApprox(proj.gains, 0, 1, 'Same-day projection yields ~0 gains');
+})();
+
+(function() {
+    var data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }]
+    });
+    var proj = projectWith(data, '2023-06-01');
+    assert(proj.principal === 0, 'Before fund start: principal = 0');
+    assert(proj.gains === 0, 'Before fund start: gains = 0');
+    assert(proj.expenses.length === 0, 'Before fund start: no expenses');
+})();
+
+(function() {
+    var data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 50000 },
+            { id: '2', type: 'deposit', date: '2024-07-01', amount: 50000 },
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    var allAtStart = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }]
+    });
+    var projAll = projectWith(allAtStart, '2025-01-01');
+    assert(proj.gains < projAll.gains, 'Staggered deposits produce less gains than a lump sum at start');
+    assert(proj.gains > 0, 'Staggered deposits still produce positive gains');
+})();
+
+
+// ========================================
+// GROUP 3: OpEx Allocation & Backdating Fix
+// ========================================
+group('3. OpEx Allocation & Backdating Fix');
+
+(function() {
+    var data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'opex', name: 'Spotify', cost: 119, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    var spotify = proj.expenses[0];
+    assert(spotify.annualCost === 119 * 12, 'Monthly OpEx annualized correctly (119*12 = 1428)');
+    assert(spotify.allocatedAnnualGains > 0, 'OpEx receives gain allocation');
+})();
+
+(function() {
+    var data = makeData({
+        settings: { initialPrincipal: 100000, accountType: 'isk', fundStartDate: '2024-01-01', redistributeFullyFunded: true },
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'opex', name: 'Netflix', cost: 169, billingCycle: 'monthly', lastProcurementDate: '2024-07-01' }
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    assert(proj.deductions < 169 * 12, 'Mid-year OpEx has FEWER than 12 months of deductions (backdating fix)');
+    assert(proj.deductions > 0, 'Mid-year OpEx still has some deductions');
+})();
+
+(function() {
+    var data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'opex', name: 'Domain', cost: 120, billingCycle: 'yearly', lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    var domain = proj.expenses[0];
+    assert(domain.annualCost === 120, 'Yearly OpEx annualCost = cost (120)');
+})();
+
+
+// ========================================
+// GROUP 4: CapEx Funding & Progress
+// ========================================
+group('4. CapEx Funding & Progress');
+
+(function() {
+    var data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 200000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Phone', cost: 12000, interval: 4, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    var proj = projectWith(data, '2028-01-01');
+    var phone = proj.expenses[0];
+    assert(phone.annualCost === 3000, 'CapEx annualCost = cost/interval (12000/4 = 3000)');
+    assert(phone.progress >= 100, 'Phone is fully funded after 4 years with 200k principal');
+    assert(phone.isFunded === true, 'isFunded flag is true');
+})();
+
+(function() {
+    var data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Laptop', cost: 20000, interval: 5, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    var proj1yr = projectWith(data, '2025-01-01');
+    var proj3yr = projectWith(data, '2027-01-01');
+    var laptop1 = proj1yr.expenses[0];
+    var laptop3 = proj3yr.expenses[0];
+    assert(laptop3.progress > laptop1.progress, 'CapEx progress increases over time');
+    assert(laptop1.progress > 0, 'CapEx progress > 0 after 1 year');
+    assert(laptop1.progress < 100, 'CapEx progress < 100 after only 1 year (20k over 5yr)');
+})();
+
+(function() {
+    var data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'TV', cost: 15000, interval: 7, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    var tv = proj.expenses[0];
+    assert(tv.scheduledDate !== null, 'CapEx has a scheduled date');
+    assert(tv.scheduledDate.startsWith('2030') || tv.scheduledDate.startsWith('2031'), 'Scheduled date is ~7 years from last proc');
+})();
+
+
+// ========================================
+// GROUP 5: Gain Allocation (OpEx priority)
+// ========================================
+group('5. Gain Allocation (OpEx-first priority)');
+
+(function() {
+    var data = makeData({
+        settings: { initialPrincipal: 10000, accountType: 'isk', fundStartDate: '2024-01-01', redistributeFullyFunded: true },
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 10000 }],
+        expenses: [
+            { id: 'e1', type: 'opex', name: 'Sub', cost: 100, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' },
+            { id: 'e2', type: 'capex', name: 'Gadget', cost: 5000, interval: 2, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    var sub = proj.expenses.find(function(e) { return e.name === 'Sub'; });
+    var gadget = proj.expenses.find(function(e) { return e.name === 'Gadget'; });
+    assert(sub.allocatedAnnualGains > 0, 'OpEx gets some allocation even when underfunded');
+    assertApprox(gadget.allocatedAnnualGains, 0, 1, 'CapEx gets 0 when gains < OpEx total');
+})();
+
+(function() {
+    var data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 200000 }],
+        expenses: [
+            { id: 'e1', type: 'opex', name: 'Sub', cost: 100, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' },
+            { id: 'e2', type: 'capex', name: 'Phone', cost: 12000, interval: 4, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    var sub = proj.expenses.find(function(e) { return e.name === 'Sub'; });
+    var phone = proj.expenses.find(function(e) { return e.name === 'Phone'; });
+    assert(sub.allocatedAnnualGains >= sub.annualCost - 1, 'OpEx fully covered when gains are sufficient');
+    assert(phone.allocatedAnnualGains > 0, 'CapEx gets allocation from remaining gains');
+})();
+
+(function() {
+    var data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Cheap', cost: 5000, interval: 5, lastProcurementDate: '2024-01-01' },
+            { id: 'e2', type: 'capex', name: 'Expensive', cost: 15000, interval: 5, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    var cheap = proj.expenses.find(function(e) { return e.name === 'Cheap'; });
+    var expensive = proj.expenses.find(function(e) { return e.name === 'Expensive'; });
+    var ratio = expensive.allocatedAnnualGains / cheap.allocatedAnnualGains;
+    assertApprox(ratio, 3.0, 0.5, 'CapEx allocation proportional to annualCost (3:1 ratio)');
+})();
+
+
+// ========================================
+// GROUP 6: Redistribution
+// ========================================
+group('6. Redistribution of Surplus');
+
+(function() {
+    var data = makeData({
+        settings: { initialPrincipal: 100000, accountType: 'isk', fundStartDate: '2020-01-01', redistributeFullyFunded: true },
+        events: [{ id: '1', type: 'deposit', date: '2020-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Cheap', cost: 2000, interval: 5, lastProcurementDate: '2020-01-01' },
+            { id: 'e2', type: 'capex', name: 'Expensive', cost: 30000, interval: 5, lastProcurementDate: '2020-01-01' }
+        ]
+    });
+    var projWith = projectWith(data, '2025-01-01');
+
+    data.settings.redistributeFullyFunded = false;
+    var projWithout = projectWith(data, '2025-01-01');
+
+    var expWithRedist = projWith.expenses.find(function(e) { return e.name === 'Expensive'; });
+    var expWithoutRedist = projWithout.expenses.find(function(e) { return e.name === 'Expensive'; });
+
+    assert(expWithRedist.allocatedAnnualGains >= expWithoutRedist.allocatedAnnualGains,
+        'Redistribution increases allocation to underfunded items');
+})();
+
+(function() {
+    var data = makeData({
+        settings: { initialPrincipal: 100000, accountType: 'isk', fundStartDate: '2020-01-01', redistributeFullyFunded: false },
+        events: [{ id: '1', type: 'deposit', date: '2020-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Cheap', cost: 1000, interval: 5, lastProcurementDate: '2020-01-01' },
+            { id: 'e2', type: 'capex', name: 'Big', cost: 50000, interval: 5, lastProcurementDate: '2020-01-01' }
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    var cheap = proj.expenses.find(function(e) { return e.name === 'Cheap'; });
+    var big = proj.expenses.find(function(e) { return e.name === 'Big'; });
+    var cheapAnnual = 1000 / 5;
+    var bigAnnual = 50000 / 5;
+    var expectedRatio = bigAnnual / cheapAnnual;
+    var actualRatio = big.allocatedAnnualGains / cheap.allocatedAnnualGains;
+    assertApprox(actualRatio, expectedRatio, 1, 'Without redistribution: allocation stays proportional to annualCost');
+})();
+
+
+// ========================================
+// GROUP 7: Procurement (CapEx outflows)
+// ========================================
+group('7. Procurement Events');
+
+(function() {
+    var data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 },
+            { id: '2', type: 'procurement', date: '2024-06-01', cost: 5000, expenseId: 'e1', expenseName: 'Phone' }
+        ],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Phone', cost: 12000, interval: 4, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    assert(proj.deductions >= 5000, 'Procurement cost is in deductions');
+    var data2 = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Phone', cost: 12000, interval: 4, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    var proj2 = projectWith(data2, '2025-01-01');
+    assert(proj.principalReturnBalance < proj2.principalReturnBalance,
+        'Procurement lowers PR balance vs no procurement');
+})();
+
+(function() {
+    var data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 },
+            { id: '2', type: 'procurement', date: '2024-01-15', cost: 50000, expenseId: 'e1', expenseName: 'Big' }
+        ],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Big', cost: 50000, interval: 3, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    var projWithProc = projectWith(data, '2025-01-01');
+    var data2 = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Big', cost: 50000, interval: 3, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    var projWithout = projectWith(data2, '2025-01-01');
+    assert(projWithProc.gains < projWithout.gains,
+        'P0 fix: Procurement reduces compound base, resulting in lower gains');
+})();
+
+
+// ========================================
+// GROUP 8: Principal Drain Detection
+// ========================================
+group('8. Principal Drain Detection');
+
+(function() {
+    var data = makeData({
+        settings: { initialPrincipal: 10000, accountType: 'isk', fundStartDate: '2024-01-01', redistributeFullyFunded: true },
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 10000 }],
+        expenses: [
+            { id: 'e1', type: 'opex', name: 'Expensive Sub', cost: 500, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    var proj = projectWith(data, '2026-01-01');
+    assert(proj.isDrainingPrincipal === true, 'Draining principal when expenses >> gains');
+    assert(proj.principalReturnBalance < 0, 'PR balance is negative');
+})();
+
+(function() {
+    var data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 500000 }],
+        expenses: [
+            { id: 'e1', type: 'opex', name: 'Cheap', cost: 50, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    assert(proj.isDrainingPrincipal === false, 'NOT draining when gains >> expenses');
+    assert(proj.principalReturnBalance > 0, 'PR balance is positive');
+})();
+
+
+// ========================================
+// GROUP 9: Edge Cases
+// ========================================
+group('9. Edge Cases');
+
+(function() {
+    var data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    assertApprox(proj.principalReturnBalance, proj.gains, 1, 'No expenses: PR balance = gains');
+    assert(proj.totalAnnualCost === 0, 'No expenses: totalAnnualCost = 0');
+})();
+
+(function() {
+    var data = makeData({});
+    var proj = projectWith(data, '2025-01-01');
+    assert(proj.principal === 100000, 'Fallback to initialPrincipal when no events');
+    assert(proj.gains > 0, 'Still earns gains from initialPrincipal');
+})();
+
+(function() {
+    var data = makeData({
+        settings: { initialPrincipal: 0, accountType: 'isk', fundStartDate: '2024-01-01', redistributeFullyFunded: true },
+    });
+    var proj = projectWith(data, '2025-01-01');
+    assert(proj.principal === 0, 'Zero principal stays zero');
+    assertApprox(proj.gains, 0, 1, 'Zero principal produces zero gains');
+})();
+
+(function() {
+    var data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 },
+            { id: '2', type: 'rate_change', date: '2024-07-01', rate: 0.14 },
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    var data2 = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }]
+    });
+    var proj2 = projectWith(data2, '2025-01-01');
+    assert(proj.gains > proj2.gains, 'Rate increase mid-year produces more gains than flat 7%');
+})();
+
+(function() {
+    var data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Annual Thing', cost: 5000, interval: 1, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    var item = proj.expenses[0];
+    assert(item.annualCost === 5000, 'CapEx with interval=1: annualCost = cost');
+})();
+
+
+// ========================================
+// GROUP 10: PR Balance Consistency
+// ========================================
+group('10. PR Balance Consistency');
+
+(function() {
+    var data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 },
+            { id: '2', type: 'procurement', date: '2024-06-01', cost: 3000, expenseId: 'e1', expenseName: 'TV' }
+        ],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'TV', cost: 15000, interval: 5, lastProcurementDate: '2024-01-01' },
+            { id: 'e2', type: 'opex', name: 'Sub', cost: 100, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    var expectedPRB = proj.gains - proj.deductions;
+    assertApprox(proj.principalReturnBalance, expectedPRB, 1, 'PR Balance = gains - deductions');
+})();
+
+(function() {
+    var data = makeData({
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 5000 },
+            { id: '2', type: 'procurement', date: '2024-02-01', cost: 10000, expenseId: 'e1', expenseName: 'Big' }
+        ],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Big', cost: 10000, interval: 2, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+    var proj = projectWith(data, '2025-01-01');
+    assert(proj.effectiveBase >= 0, 'effectiveBase is clamped to >= 0');
+})();
+
+
+// ========================================
+// GROUP 11: Cash-Flow Timeline Build
+// ========================================
+group('11. Cash-Flow Timeline Construction');
+
+(function() {
+    var fundStart = new Date('2024-01-01');
+    var date = new Date('2025-01-01');
+    var events = [{ date: '2024-01-01', type: 'deposit', amount: 100000 }];
+    var expenses = [
+        { id: 'e1', type: 'opex', name: 'Sub', cost: 100, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' }
+    ];
+    var sorted = [].concat(events).sort(function(a, b) { return a.date.localeCompare(b.date); });
+    var timeline = FundFlow._buildCashFlowTimeline(sorted, expenses, fundStart, date, '2025-01-01');
+    var opexOutflows = timeline.filter(function(ev) { return ev.kind === 'outflow'; });
+    assert(opexOutflows.length >= 11 && opexOutflows.length <= 12, 'OpEx generates ~12 monthly outflows over 1 year (got ' + opexOutflows.length + ')');
+})();
+
+(function() {
+    var fundStart = new Date('2024-01-01');
+    var date = new Date('2025-01-01');
+    var events = [{ date: '2024-01-01', type: 'deposit', amount: 100000 }];
+    var expEarly = [
+        { id: 'e1', type: 'opex', name: 'Early', cost: 100, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' }
+    ];
+    var expLate = [
+        { id: 'e1', type: 'opex', name: 'Late', cost: 100, billingCycle: 'monthly', lastProcurementDate: '2024-07-01' }
+    ];
+    var sorted = [].concat(events).sort(function(a, b) { return a.date.localeCompare(b.date); });
+    var earlyTimeline = FundFlow._buildCashFlowTimeline(sorted, expEarly, fundStart, date, '2025-01-01');
+    var lateTimeline = FundFlow._buildCashFlowTimeline(sorted, expLate, fundStart, date, '2025-01-01');
+    var earlyOutflows = earlyTimeline.filter(function(ev) { return ev.kind === 'outflow'; }).length;
+    var lateOutflows = lateTimeline.filter(function(ev) { return ev.kind === 'outflow'; }).length;
+    assert(lateOutflows < earlyOutflows, 'Later OpEx start = fewer outflows (' + lateOutflows + ' < ' + earlyOutflows + ')');
+})();
+
+
+// ========================================
+// GROUP 12: Integration / Full Scenarios
+// ========================================
+group('12. Integration Scenarios');
+
+(function() {
+    var data = makeData({
+        settings: { initialPrincipal: 135000, accountType: 'isk', fundStartDate: '2024-01-01', redistributeFullyFunded: true },
+        events: [
+            { id: '1', type: 'deposit', date: '2024-01-01', amount: 135000 },
+            { id: '2', type: 'rate_change', date: '2024-01-01', rate: 0.07 },
+        ],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Phone', cost: 12000, interval: 4, lastProcurementDate: '2024-01-01' },
+            { id: 'e2', type: 'capex', name: 'Laptop', cost: 20000, interval: 5, lastProcurementDate: '2024-01-01' },
+            { id: 'e3', type: 'opex', name: 'Spotify', cost: 119, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' },
+            { id: 'e4', type: 'opex', name: 'iCloud', cost: 9, billingCycle: 'monthly', lastProcurementDate: '2024-01-01' },
+        ]
+    });
+    var proj = projectWith(data, '2029-01-01');
+
+    assert(proj.principal === 135000, 'Integration: principal = 135000');
+    assert(proj.gains > 0, 'Integration: gains > 0 after 5 years');
+    assert(proj.expenses.length === 4, 'Integration: all 4 expenses projected');
+
+    var totalOpEx = proj.expenses.filter(function(e) { return e.type === 'opex'; }).reduce(function(s, e) { return s + e.annualCost; }, 0);
+    var totalCapEx = proj.expenses.filter(function(e) { return e.type === 'capex'; }).reduce(function(s, e) { return s + e.annualCost; }, 0);
+    assert(totalOpEx > 0, 'Integration: OpEx cost > 0');
+    assert(totalCapEx > 0, 'Integration: CapEx cost > 0');
+
+    assertApprox(proj.annualGainAmount, proj.effectiveBase * proj.rate, 1, 'Integration: annualGainAmount = effectiveBase * rate');
+
+    var totalAllocated = proj.expenses.reduce(function(s, e) { return s + e.allocatedAnnualGains; }, 0);
+    assert(totalAllocated <= proj.annualGainAmount + 1, 'Integration: total allocated <= annualGainAmount');
+})();
+
+(function() {
+    var data = makeData({
+        events: [{ id: '1', type: 'deposit', date: '2024-01-01', amount: 100000 }],
+        expenses: [
+            { id: 'e1', type: 'capex', name: 'Phone', cost: 12000, interval: 4, lastProcurementDate: '2024-01-01' }
+        ]
+    });
+
+    var gains1 = projectWith(data, '2025-01-01').gains;
+    var gains2 = projectWith(data, '2026-01-01').gains;
+    var gains3 = projectWith(data, '2027-01-01').gains;
+
+    assert(gains2 > gains1, 'Gains grow year over year (year 2 > year 1)');
+    assert(gains3 > gains2, 'Gains grow year over year (year 3 > year 2)');
+
+    var delta1 = gains2 - gains1;
+    var delta2 = gains3 - gains2;
+    assert(delta2 > delta1, 'Compounding: gain increment increases year over year');
+})();
+
+
+// ========================================
+// GROUP 13: Timeline Filter Bugfixes
+// ========================================
+group('13. Timeline Filter Bugfixes');
+
+(function() {
+    var fundStart = new Date('2024-01-01');
+    var date = new Date('2025-01-01');
+    var events = [{ date: '2024-01-01', type: 'deposit', amount: 100000 }];
+    var expenses = [
+        { id: 'e1', type: 'opex', name: 'Late Sub', cost: 100, billingCycle: 'monthly', lastProcurementDate: '2024-07-01' }
+    ];
+    var sorted = [].concat(events).sort(function(a, b) { return a.date.localeCompare(b.date); });
+    var timeline = FundFlow._buildCashFlowTimeline(sorted, expenses, fundStart, date, '2025-01-01');
+    var opexOutflows = timeline.filter(function(ev) { return ev.kind === 'outflow'; });
+
+    var tooEarly = opexOutflows.filter(function(ev) { return ev.date < '2024-07-01'; });
+    assert(tooEarly.length === 0, 'OpEx outflows do not appear before lastProcurementDate (found ' + tooEarly.length + ' early)');
+
+    assert(opexOutflows.length >= 5 && opexOutflows.length <= 6, 'OpEx with later start generates ~6 months of outflows, not 12 (got ' + opexOutflows.length + ')');
+})();
+
+(function() {
+    var items = [
+        { kind: 'expense', subtype: 'capex', name: 'Laptop' },
+        { kind: 'expense', subtype: 'opex', name: 'Hosting' },
+        { kind: 'event', subtype: 'deposit', name: 'Deposit' },
+        { kind: 'event', subtype: 'rate_change', name: 'Rate' },
+        { kind: 'event', subtype: 'procurement', name: 'Purchase' },
+        { kind: 'event', subtype: 'procurement', name: 'Purchase 2' },
+    ];
+
+    function applyFilter(items, filter) {
+        return items.filter(function(item) {
+            switch (filter) {
+                case 'all': return true;
+                case 'expenses': return item.kind === 'expense';
+                case 'capex': return item.kind === 'expense' && item.subtype === 'capex';
+                case 'opex': return item.kind === 'expense' && item.subtype === 'opex';
+                case 'deposits': return item.kind === 'event' && item.subtype === 'deposit';
+                case 'rates': return item.kind === 'event' && item.subtype === 'rate_change';
+                case 'procurements': return item.kind === 'event' && item.subtype === 'procurement';
+                default: return true;
+            }
+        });
+    }
+
+    assert(applyFilter(items, 'all').length === 6, 'Filter "all" returns all 6 items');
+    assert(applyFilter(items, 'expenses').length === 2, 'Filter "expenses" returns 2 expenses');
+    assert(applyFilter(items, 'capex').length === 1, 'Filter "capex" returns 1 CapEx');
+    assert(applyFilter(items, 'opex').length === 1, 'Filter "opex" returns 1 OpEx');
+    assert(applyFilter(items, 'deposits').length === 1, 'Filter "deposits" returns 1 deposit');
+    assert(applyFilter(items, 'rates').length === 1, 'Filter "rates" returns 1 rate change');
+    assert(applyFilter(items, 'procurements').length === 2, 'Filter "procurements" returns 2 procurement events');
+})();
+
+(function() {
+    var macbookId = 'macbook-001';
+    var iphoneId = 'iphone-001';
+    var expenses = [
+        { id: macbookId, name: 'MacBook Pro', type: 'capex' },
+        { id: iphoneId, name: 'iPhone', type: 'capex' }
+    ];
+    var procurements = [
+        { type: 'procurement', expenseId: macbookId, expenseName: 'MacBook Pro', cost: 33000 },
+        { type: 'procurement', expenseId: iphoneId, expenseName: 'iPhone', cost: 17500 }
+    ];
+
+    procurements.forEach(function(proc) {
+        var linked = expenses.find(function(e) { return e.id === proc.expenseId; });
+        assert(linked !== undefined, 'Procurement for "' + proc.expenseName + '" has valid expenseId');
+        assert(linked.name === proc.expenseName, 'Procurement expenseId matches expense name for "' + proc.expenseName + '"');
+    });
+})();
+
+
+// ================================================================
+//  PART 2: UI INTERACTION TESTS (Groups 14-23)
+//  These load index.html in an iframe and exercise the full app.
+// ================================================================
+
+(async function runUITests() {
+    sectionLabel('UI TESTS (iframe)', 'section-ui');
+
+    // Load the app in an iframe — fetch index.html and app.js, replace CDN
+    // scripts with a Chart.js stub to avoid tracking-prevention / network
+    // issues, inline app.js, and write via srcdoc.
+    group('Loading app...');
+    try {
+        var htmlP = fetch('index.html').then(function(r) { return r.text(); });
+        var jsP = fetch('app.js').then(function(r) { return r.text(); });
+        var results_ = await Promise.all([htmlP, jsP]);
+        var html = results_[0];
+        var appJs = results_[1];
+
+        // Replace CDN <script> tags with a minimal Chart.js stub
+        var chartStub =
+            '// In-memory localStorage stub — srcdoc iframes have opaque origin\n' +
+            '// and cannot access real localStorage.\n' +
+            '(function() {\n' +
+            '  var store = {};\n' +
+            '  window.localStorage = {\n' +
+            '    getItem: function(k) { return store[k] || null; },\n' +
+            '    setItem: function(k, v) { store[k] = String(v); },\n' +
+            '    removeItem: function(k) { delete store[k]; },\n' +
+            '    clear: function() { store = {}; },\n' +
+            '    get length() { return Object.keys(store).length; },\n' +
+            '    key: function(i) { return Object.keys(store)[i] || null; }\n' +
+            '  };\n' +
+            '})();\n' +
+            'window.Chart = function(ctx, cfg) {\n' +
+            '  this.destroy = function(){};\n' +
+            '  this.update = function(){};\n' +
+            '  this.resize = function(){};\n' +
+            '  this.draw = function(){};\n' +
+            '  this.data = cfg && cfg.data || { datasets:[] };\n' +
+            '  this.options = cfg && cfg.options || {};\n' +
+            '};\n' +
+            'Chart.register = function(){};\n' +
+            'Chart.defaults = { font:{}, plugins:{ legend:{display:true}, tooltip:{} } };\n';
+        html = html.replace(/<script[^>]*src="[^"]*chart\.js[^"]*"[^>]*><\/script>/gi, '');
+        html = html.replace(/<script[^>]*src="[^"]*chartjs-adapter[^"]*"[^>]*><\/script>/gi, '');
+        // Replace app.js external script with inline scripts:
+        // 1) Chart stub + localStorage stub
+        // 2) The app code + expose FundFlow on window (const at script-level
+        //    doesn't create a window property, cross-frame access needs it).
+        //    Both must be in the same <script> so the const binding is reachable.
+        // If app.js has a runtime error, we catch it and still expose FundFlow.
+        html = html.replace(
+            /<script src="app\.js"><\/script>/,
+            '<script>\n' + chartStub + '<\/script>\n' +
+            '<script>\n' + appJs + '\ntry { window.FundFlow = FundFlow; } catch(e) { console.error("FundFlow expose failed:", e); }\n<\/script>'
+        );
+
+        await new Promise(function(resolve, reject) {
+            var timeout = setTimeout(function() { reject(new Error('iframe load timed out')); }, 15000);
+            appFrame.onload = function() { clearTimeout(timeout); resolve(); };
+            appFrame.srcdoc = html;
+        });
+
+        // Wait for FundFlow to be defined and initialized in the iframe
+        await waitFor(function() {
+            try { return getWin() && getWin().FundFlow && getWin().FundFlow.data; }
+            catch(e) { return false; }
+        }, 10000);
+
+        // Stub native dialogs to prevent blocking
+        getWin().confirm = function() { return true; };
+        getWin().alert = function() {};
+
+        // Set debounce to 0 for instant updates
+        if (getApp().data.settings) {
+            getApp().data.settings.listDebounceMs = 0;
+        }
+
+        log('pass', 'iframe loaded and FundFlow initialized');
+        results.passed++;
+
+    } catch (e) {
+        var diag = '';
+        try {
+            var w = appFrame.contentWindow;
+            diag = ' | win=' + !!w;
+            if (w) {
+                diag += ', FundFlow=' + typeof w.FundFlow;
+                diag += ', Chart=' + typeof w.Chart;
+                diag += ', readyState=' + (appFrame.contentDocument ? appFrame.contentDocument.readyState : 'N/A');
+            }
+        } catch(d) { diag = ' | diag error: ' + d.message; }
+        log('fail', 'Failed to load app iframe: ' + e.message + diag);
+        results.failed++;
+        renderSummary();
+        return;
+    }
+
+    // ========================================
+    // GROUP 14: App Initialization
+    // ========================================
+    group('14. App Initialization');
+
+    (function() {
+        var app = getApp();
+        assert(app !== undefined && app !== null, 'FundFlow object exists in iframe');
+        assert(typeof app.data === 'object', 'FundFlow.data is an object');
+        assert(typeof app.data.settings === 'object', 'FundFlow.data.settings exists');
+        assert(Array.isArray(app.data.expenses), 'FundFlow.data.expenses is an array');
+        assert(Array.isArray(app.data.events), 'FundFlow.data.events is an array');
+    })();
+
+    (function() {
+        var doc = getDoc();
+        assert(doc.getElementById('prBalance') !== null, 'DOM: #prBalance exists');
+        assert(doc.getElementById('mainChart') !== null, 'DOM: #mainChart exists');
+        assert(doc.getElementById('unifiedList') !== null, 'DOM: #unifiedList exists');
+        assert(doc.getElementById('principalDisplay') !== null, 'DOM: #principalDisplay exists');
+        assert(doc.getElementById('gainsDisplay') !== null, 'DOM: #gainsDisplay exists');
+        assert(doc.getElementById('expenseModal') !== null, 'DOM: #expenseModal exists');
+        assert(doc.getElementById('eventModal') !== null, 'DOM: #eventModal exists');
+        assert(doc.getElementById('procurementModal') !== null, 'DOM: #procurementModal exists');
+    })();
+
+    (function() {
+        var principalText = getText('#principalDisplay');
+        assert(principalText.length > 0, 'Principal display has content');
+    })();
+
+
+    // ========================================
+    // GROUP 15: Example Data Loading
+    // ========================================
+    group('15. Example Data Loading');
+
+    try {
+        getApp().loadExampleData();
+        await waitMs(500);
+
+        (function() {
+            var app = getApp();
+            assert(app.data.expenses.length === 7, 'Example data: 7 expenses loaded (got ' + app.data.expenses.length + ')');
+            assert(app.data.events.length === 7, 'Example data: 7 events loaded (got ' + app.data.events.length + ')');
+        })();
+
+        (function() {
+            assert(getApp().data.settings.initialPrincipal === 250000, 'Example data: principal = 250000');
+            assert(getApp().data.settings.accountType === 'isk', 'Example data: account type = isk');
+        })();
+
+        (function() {
+            var principalText = getText('#principalDisplay');
+            assert(principalText.indexOf('250') !== -1 || principalText.indexOf('330') !== -1,
+                'Principal display shows deposit total (got: "' + principalText + '")');
+        })();
+
+        (function() {
+            var listItems = iframeEls('#unifiedList > *:not(.empty-state)');
+            assert(listItems.length > 0, 'Unified list has items after loading example data (got ' + listItems.length + ')');
+        })();
+
+        (function() {
+            var prText = getText('#prBalance');
+            assert(prText.length > 0, 'PR Balance shows a value after example data');
+        })();
+
+    } catch (e) {
+        log('fail', 'Example data loading failed: ' + e.message);
+        results.failed++;
+    }
+
+
+    // ========================================
+    // GROUP 16: Settings
+    // ========================================
+    group('16. Settings');
+
+    try {
+        // Test principal change
+        var oldPrincipal = getApp().data.settings.initialPrincipal;
+        fill('#initialPrincipal', '300000');
+        await waitMs(200);
+        (function() {
+            // The principal input updates the initial deposit event amount
+            assert(getApp().data.settings.initialPrincipal === 300000,
+                'Settings: initialPrincipal updated to 300000');
+        })();
+
+        // Test redistribute toggle
+        (function() {
+            var before = getApp().data.settings.redistributeFullyFunded;
+            click('#redistributeToggle');
+            var after = getApp().data.settings.redistributeFullyFunded;
+            assert(before !== after, 'Settings: redistribute toggle changed state');
+            // Toggle back
+            click('#redistributeToggle');
+        })();
+
+        // Test account type
+        (function() {
+            selectVal('#accountType', 'traditional');
+            assert(getApp().data.settings.accountType === 'traditional',
+                'Settings: account type changed to traditional');
+            // Restore
+            selectVal('#accountType', 'isk');
+        })();
+
+        // Test fund start date
+        (function() {
+            var newDate = '2022-06-15';
+            fill('#fundStartDate', newDate);
+            assert(getApp().data.settings.fundStartDate === newDate,
+                'Settings: fund start date updated');
+        })();
+
+    } catch (e) {
+        log('fail', 'Settings test failed: ' + e.message);
+        results.failed++;
+    }
+
+
+    // ========================================
+    // GROUP 17: Expense CRUD
+    // ========================================
+    group('17. Expense CRUD');
+
+    try {
+        // Reset to example data for a clean state
+        getApp().loadExampleData();
+        await waitMs(500);
+        var startExpenseCount = getApp().data.expenses.length;
+
+        // Test: Open expense modal
+        click('#addExpenseBtn');
+        await waitMs(100);
+        (function() {
+            assert(hasClass('#expenseModal', 'open'), 'Expense modal opens on click');
+        })();
+
+        // Test: Add a CapEx expense
+        (function() {
+            // Ensure capex type is selected (it should be default)
+            var capexBtn = iframeEl('.type-btn[data-type="capex"]');
+            if (capexBtn && !capexBtn.classList.contains('active')) {
+                capexBtn.click();
+            }
+        })();
+        fill('#expenseName', 'Test Keyboard');
+        fill('#expenseCost', '2500');
+        fill('#expenseInterval', '3');
+        fill('#expenseDate', '2025-01-15');
+        click('#saveExpense');
+        await waitMs(300);
+
+        (function() {
+            assert(!hasClass('#expenseModal', 'open'), 'Expense modal closes after save');
+            var newCount = getApp().data.expenses.length;
+            assert(newCount === startExpenseCount + 1, 'Expense count increased by 1 (was ' + startExpenseCount + ', now ' + newCount + ')');
+            var added = getApp().data.expenses.find(function(e) { return e.name === 'Test Keyboard'; });
+            assert(added !== undefined, 'New expense "Test Keyboard" found in data');
+            assert(added && added.type === 'capex', 'New expense is CapEx');
+            assert(added && added.cost === 2500, 'New expense cost = 2500');
+            assert(added && added.interval === 3, 'New expense interval = 3');
+        })();
+
+        // Test: Add an OpEx expense
+        click('#addExpenseBtn');
+        await waitMs(100);
+        (function() {
+            // Switch to opex type
+            var opexBtn = iframeEl('.type-btn[data-type="opex"]');
+            if (opexBtn) opexBtn.click();
+        })();
+        await waitMs(50);
+        fill('#expenseName', 'Test Streaming');
+        fill('#expenseCost', '199');
+        selectVal('#billingCycle', 'monthly');
+        fill('#expenseDate', '2025-03-01');
+        click('#saveExpense');
+        await waitMs(300);
+
+        (function() {
+            var added = getApp().data.expenses.find(function(e) { return e.name === 'Test Streaming'; });
+            assert(added !== undefined, 'OpEx "Test Streaming" found in data');
+            assert(added && added.type === 'opex', 'New expense is OpEx');
+            assert(added && added.billingCycle === 'monthly', 'OpEx billing cycle is monthly');
+        })();
+
+        // Test: Delete expense
+        var countBefore = getApp().data.expenses.length;
+        var testExp = getApp().data.expenses.find(function(e) { return e.name === 'Test Keyboard'; });
+        if (testExp) {
+            getApp().deleteExpense(testExp.id);
+            await waitMs(300);
+        }
+        (function() {
+            var countAfter = getApp().data.expenses.length;
+            assert(countAfter === countBefore - 1, 'Expense deleted: count decreased by 1');
+            var still = getApp().data.expenses.find(function(e) { return e.name === 'Test Keyboard'; });
+            assert(still === undefined, 'Deleted expense no longer in data');
+        })();
+
+        // Clean up test streaming expense too
+        var streamExp = getApp().data.expenses.find(function(e) { return e.name === 'Test Streaming'; });
+        if (streamExp) {
+            getApp().deleteExpense(streamExp.id);
+            await waitMs(200);
+        }
+
+    } catch (e) {
+        log('fail', 'Expense CRUD test failed: ' + e.message);
+        results.failed++;
+    }
+
+
+    // ========================================
+    // GROUP 18: Event CRUD
+    // ========================================
+    group('18. Event CRUD');
+
+    try {
+        // Reset to example data
+        getApp().loadExampleData();
+        await waitMs(500);
+        var startEventCount = getApp().data.events.length;
+
+        // Test: Open event modal
+        click('#addEventBtn');
+        await waitMs(100);
+        (function() {
+            assert(hasClass('#eventModal', 'open'), 'Event modal opens on click');
+        })();
+
+        // Test: Add deposit event
+        (function() {
+            // Ensure deposit type is selected
+            var depositBtn = iframeEl('.event-type-btn[data-type="deposit"]');
+            if (depositBtn && !depositBtn.classList.contains('active')) {
+                depositBtn.click();
+            }
+        })();
+        fill('#eventDate', '2025-06-01');
+        fill('#eventAmount', '75000');
+        click('#saveEvent');
+        await waitMs(300);
+
+        (function() {
+            assert(!hasClass('#eventModal', 'open'), 'Event modal closes after save');
+            var newCount = getApp().data.events.length;
+            assert(newCount === startEventCount + 1, 'Event count increased by 1');
+            var deposits = getApp().data.events.filter(function(e) {
+                return e.type === 'deposit' && e.amount === 75000;
+            });
+            assert(deposits.length > 0, 'Deposit event with amount 75000 found');
+        })();
+
+        // Test: Add rate change event
+        startEventCount = getApp().data.events.length;
+        click('#addEventBtn');
+        await waitMs(100);
+        (function() {
+            var rateBtn = iframeEl('.event-type-btn[data-type="rate_change"]');
+            if (rateBtn) rateBtn.click();
+        })();
+        await waitMs(50);
+        fill('#eventDate', '2025-09-01');
+        fill('#eventRate', '8.5');
+        click('#saveEvent');
+        await waitMs(300);
+
+        (function() {
+            var newCount = getApp().data.events.length;
+            assert(newCount === startEventCount + 1, 'Rate change event added');
+            var rateEvents = getApp().data.events.filter(function(e) {
+                return e.type === 'rate_change' && Math.abs(e.rate - 0.085) < 0.001;
+            });
+            assert(rateEvents.length > 0, 'Rate change event with rate 8.5% found');
+        })();
+
+        // Test: Delete event
+        var countBefore = getApp().data.events.length;
+        var testDeposit = getApp().data.events.find(function(e) {
+            return e.type === 'deposit' && e.amount === 75000;
+        });
+        if (testDeposit) {
+            getApp().deleteEvent(testDeposit.id);
+            await waitMs(300);
+        }
+        (function() {
+            var countAfter = getApp().data.events.length;
+            assert(countAfter === countBefore - 1, 'Event deleted: count decreased by 1');
+        })();
+
+    } catch (e) {
+        log('fail', 'Event CRUD test failed: ' + e.message);
+        results.failed++;
+    }
+
+
+    // ========================================
+    // GROUP 19: Procurement
+    // ========================================
+    group('19. Procurement');
+
+    try {
+        // Reset to example data
+        getApp().loadExampleData();
+        await waitMs(500);
+
+        var startEventCount = getApp().data.events.length;
+        // Find a capex expense to procure
+        var capexExp = getApp().data.expenses.find(function(e) { return e.type === 'capex'; });
+
+        if (capexExp) {
+            // Open procurement modal programmatically
+            getApp().openProcurementModal(capexExp.id);
+            await waitMs(100);
+
+            (function() {
+                assert(hasClass('#procurementModal', 'open'), 'Procurement modal opens');
+            })();
+
+            fill('#procurementDate', '2025-04-01');
+            fill('#procurementCost', '15000');
+            fill('#procurementNote', 'Test purchase');
+            click('#saveProcurement');
+            await waitMs(300);
+
+            (function() {
+                assert(!hasClass('#procurementModal', 'open'), 'Procurement modal closes after save');
+                var newCount = getApp().data.events.length;
+                assert(newCount === startEventCount + 1, 'Procurement event added (was ' + startEventCount + ', now ' + newCount + ')');
+                var procEvents = getApp().data.events.filter(function(e) {
+                    return e.type === 'procurement' && e.cost === 15000;
+                });
+                assert(procEvents.length > 0, 'Procurement event with cost 15000 found');
+            })();
+
+        } else {
+            skip('Procurement tests', 'No capex expense in example data');
+        }
+
+    } catch (e) {
+        log('fail', 'Procurement test failed: ' + e.message);
+        results.failed++;
+    }
+
+
+    // ========================================
+    // GROUP 20: Filtering
+    // ========================================
+    group('20. Filtering');
+
+    try {
+        // Reset to example data
+        getApp().loadExampleData();
+        await waitMs(500);
+
+        var filters = ['all', 'expenses', 'capex', 'opex', 'deposits', 'rates', 'procurements'];
+        for (var i = 0; i < filters.length; i++) {
+            var filterName = filters[i];
+            var tabSelector = '.filter-tab[data-filter="' + filterName + '"]';
+            var tab = iframeEl(tabSelector);
+            if (tab) {
+                tab.click();
+                await waitMs(200);
+
+                (function(fn) {
+                    assert(hasClass(tabSelector, 'active'),
+                        'Filter tab "' + fn + '" is active when clicked');
+                    assert(getApp().activeFilter === fn,
+                        'FundFlow.activeFilter = "' + fn + '"');
+
+                    var listItems = iframeEls('#unifiedList > *:not(.empty-state)');
+                    if (fn === 'all') {
+                        assert(listItems.length > 0, 'Filter "all" shows items');
+                    }
+                })(filterName);
+            } else {
+                skip('Filter tab "' + filterName + '"', 'Tab not found in DOM');
+            }
+        }
+
+        // Verify count badges exist on tabs
+        (function() {
+            var countBadges = iframeEls('.filter-tab .count');
+            assert(countBadges.length > 0, 'Filter tabs have count badges');
+        })();
+
+    } catch (e) {
+        log('fail', 'Filtering test failed: ' + e.message);
+        results.failed++;
+    }
+
+
+    // ========================================
+    // GROUP 21: Pane Toggles
+    // ========================================
+    group('21. Pane Toggles');
+
+    try {
+        // Reset to example data
+        getApp().loadExampleData();
+        await waitMs(500);
+
+        var panes = ['breakdown', 'priority', 'cashflow', 'milestones'];
+        for (var i = 0; i < panes.length; i++) {
+            var paneName = panes[i];
+            var toggleSelector = '.pane-toggle[data-pane="' + paneName + '"]';
+            var paneId = '#' + paneName + 'Pane';
+            var toggleBtn = iframeEl(toggleSelector);
+
+            if (toggleBtn) {
+                // Toggle on
+                if (!getApp().visiblePanes[paneName]) {
+                    toggleBtn.click();
+                    await waitMs(300);
+                }
+
+                (function(pn, ps, ts) {
+                    assert(getApp().visiblePanes[pn] === true,
+                        'Pane "' + pn + '" is visible in state');
+                    assert(hasClass(ts, 'active'),
+                        'Pane toggle "' + pn + '" has active class');
+                    var paneEl = iframeEl(ps);
+                    if (paneEl) {
+                        assert(paneEl.style.display !== 'none',
+                            'Pane card "' + pn + '" is not display:none');
+                    }
+                })(paneName, paneId, toggleSelector);
+
+                // Toggle off
+                toggleBtn.click();
+                await waitMs(200);
+
+                (function(pn, ts) {
+                    assert(getApp().visiblePanes[pn] === false,
+                        'Pane "' + pn + '" toggled off');
+                    assert(!hasClass(ts, 'active'),
+                        'Pane toggle "' + pn + '" lost active class');
+                })(paneName, toggleSelector);
+
+            } else {
+                skip('Pane toggle "' + paneName + '"', 'Button not found');
+            }
+        }
+
+    } catch (e) {
+        log('fail', 'Pane toggle test failed: ' + e.message);
+        results.failed++;
+    }
+
+
+    // ========================================
+    // GROUP 22: Help System
+    // ========================================
+    group('22. Help System');
+
+    try {
+        // First make sure help is off
+        if (getDoc().body.classList.contains('help-visible')) {
+            getApp().toggleHelp();
+            await waitMs(100);
+        }
+
+        // Toggle help on
+        getApp().toggleHelp();
+        await waitMs(200);
+
+        (function() {
+            assert(getDoc().body.classList.contains('help-visible'),
+                'Help toggle: body has help-visible class');
+        })();
+
+        (function() {
+            var helpCards = iframeEls('.help-card');
+            assert(helpCards.length > 0, 'Help cards exist in DOM (' + helpCards.length + ' found)');
+            // Check at least one is visible
+            var anyVisible = false;
+            for (var i = 0; i < helpCards.length; i++) {
+                var style = getWin().getComputedStyle(helpCards[i]);
+                if (style.display !== 'none') { anyVisible = true; break; }
+            }
+            assert(anyVisible, 'At least one help card is visible when help is active');
+        })();
+
+        // Toggle help off
+        getApp().toggleHelp();
+        await waitMs(200);
+
+        (function() {
+            assert(!getDoc().body.classList.contains('help-visible'),
+                'Help toggle off: body lost help-visible class');
+        })();
+
+    } catch (e) {
+        log('fail', 'Help system test failed: ' + e.message);
+        results.failed++;
+    }
+
+
+    // ========================================
+    // GROUP 23: Reset
+    // ========================================
+    group('23. Reset');
+
+    try {
+        // Load example data first
+        getApp().loadExampleData();
+        await waitMs(500);
+
+        assert(getApp().data.expenses.length > 0, 'Pre-reset: has expenses');
+        assert(getApp().data.events.length > 0, 'Pre-reset: has events');
+
+        // Reset
+        getApp().resetData();
+        await waitMs(500);
+
+        (function() {
+            assert(getApp().data.expenses.length === 0, 'After reset: expenses array is empty');
+            assert(getApp().data.events.length === 0, 'After reset: events array is empty');
+            assert(getApp().data.settings.initialPrincipal === 135000, 'After reset: principal back to default 135000');
+        })();
+
+        (function() {
+            // Check that UI reflects empty state
+            var listItems = iframeEls('#unifiedList > *');
+            var hasEmpty = false;
+            for (var i = 0; i < listItems.length; i++) {
+                if (listItems[i].classList.contains('empty-state')) hasEmpty = true;
+            }
+            // Either the list is empty or shows an empty-state message
+            assert(listItems.length === 0 || hasEmpty,
+                'After reset: unified list is empty or shows empty state');
+        })();
+
+    } catch (e) {
+        log('fail', 'Reset test failed: ' + e.message);
+        results.failed++;
+    }
+
+
+    // ========== FINAL SUMMARY ==========
+    renderSummary();
+})();
+
+function renderSummary() {
+    var summaryEl = document.getElementById('summary');
+    var total = results.passed + results.failed + results.skipped;
+    summaryEl.className = 'summary ' + (results.failed === 0 ? 'all-pass' : 'has-fail');
+    summaryEl.innerHTML =
+        '<strong>' + total + ' tests</strong> &mdash; ' +
+        '<span class="pass">' + results.passed + ' passed</span>, ' +
+        '<span class="fail">' + results.failed + ' failed</span>, ' +
+        '<span class="skip">' + results.skipped + ' skipped</span>';
+
+    if (results.failed === 0) {
+        summaryEl.innerHTML += '<br><br>All tests passed.';
+    } else {
+        summaryEl.innerHTML += '<br><br>Some tests failed. Scroll up to see details.';
+    }
+}
+</script>
+</body>
+</html>
