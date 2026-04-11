@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+# dot:clone — Bootstrap dotfiles using 1Password for authentication.
+#
+# Idempotent. Each step checks if already done and skips, or fails with
+# a hint. Safe to re-run at any point.
+#
+# Usage:
+#   bash clone [branch]                           # run directly
+#   curl -fsSL https://haijock.github.io/dot/clone | bash  # remote
+#   mise run dot:clone [branch]                   # after checkout
+#
+# Prerequisites (install manually, the script checks for them):
+#   curl https://mise.run | sh && eval "$(mise activate bash)"
+#   mise use -g 1password
+#   eval "$(op signin)"
+#
+#MISE description="Clone dotfiles into $HOME using 1Password for authentication"
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+REPO="git@github.com:haijock/dotfiles.git"
+DOT_DIR="$HOME/.dot"
+BRANCH="${1:-}"
+OP_SSH_KEY="op://Personal/haijock_gmail.com/private key?ssh-format=openssh"
+OP_GITHUB_TOKEN="op://Personal/github.com/MISE_GITHUB_TOKEN"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+ok()   { printf '  \342\234\205 %s\n' "$*"; }
+die()  { printf '  \342\235\214 %s\n' "$1"; shift; for h in "$@"; do printf '     %s\n' "$h"; done; exit 1; }
+step() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+
+dot() { GIT_DIR="$DOT_DIR" GIT_WORK_TREE="$HOME" "$@"; }
+
+# ---------------------------------------------------------------------------
+# 1. Prerequisites
+# ---------------------------------------------------------------------------
+step "Prerequisites"
+
+command -v git  &>/dev/null && ok "git"  || die "git not found"  "Install via your package manager"
+command -v mise &>/dev/null && ok "mise" || die "mise not found" "curl https://mise.run | sh" "eval \"\$(mise activate bash)\""
+command -v op   &>/dev/null && ok "op"   || die "op not found"   "mise use -g 1password"
+
+op whoami &>/dev/null && ok "1Password signed in" \
+    || die "Not signed in to 1Password" "eval \"\$(op signin)\""
+
+# ---------------------------------------------------------------------------
+# 2. SSH access
+# ---------------------------------------------------------------------------
+step "SSH access"
+
+check_ssh() {
+    local output
+    output=$(ssh -T git@github.com 2>&1) || true
+    echo "$output" | grep -q "successfully authenticated"
+}
+
+if check_ssh; then
+    ok "GitHub SSH verified"
+else
+    # Start agent if none running
+    if ! ssh-add -l &>/dev/null 2>&1; then
+        [ -z "${SSH_AUTH_SOCK:-}" ] && eval "$(ssh-agent -s)" >/dev/null 2>&1
+    fi
+    # Load key from 1Password
+    ssh-add <(op read "$OP_SSH_KEY") 2>/dev/null \
+        || die "Could not load SSH key from 1Password" \
+               "eval \"\$(ssh-agent -s)\"" \
+               "ssh-add <(op read \"$OP_SSH_KEY\")"
+    ok "SSH key loaded from 1Password"
+
+    check_ssh || die "GitHub SSH failed" "ssh -T git@github.com"
+    ok "GitHub SSH verified"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. GitHub token
+# ---------------------------------------------------------------------------
+step "GitHub token"
+
+if [ -f "$HOME/.env" ] && grep -q '^MISE_GITHUB_TOKEN=.' "$HOME/.env" 2>/dev/null; then
+    ok "MISE_GITHUB_TOKEN in ~/.env"
+else
+    TOKEN=$(op read "$OP_GITHUB_TOKEN" 2>/dev/null) \
+        || die "Could not read token from 1Password" \
+               "Ensure it exists at: $OP_GITHUB_TOKEN"
+    echo "MISE_GITHUB_TOKEN=$TOKEN" >> "$HOME/.env"
+    ok "MISE_GITHUB_TOKEN written to ~/.env"
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Clone
+# ---------------------------------------------------------------------------
+step "Clone"
+
+if [ -d "$DOT_DIR" ]; then
+    ok "Already cloned at $DOT_DIR"
+else
+    CLONE_ARGS=(--bare)
+    [ -n "$BRANCH" ] && CLONE_ARGS+=(--branch "$BRANCH" --single-branch)
+    git clone "${CLONE_ARGS[@]}" "$REPO" "$DOT_DIR" \
+        || die "Clone failed" "Check SSH access: ssh -T git@github.com"
+    ok "Cloned to $DOT_DIR"
+fi
+
+dot git config --local status.showUntrackedFiles no
+
+# ---------------------------------------------------------------------------
+# 5. Checkout
+# ---------------------------------------------------------------------------
+step "Checkout"
+
+# Determine branch
+if [ -z "$BRANCH" ]; then
+    BRANCH=$(dot git symbolic-ref --short HEAD 2>/dev/null || true)
+    if [ -z "$BRANCH" ]; then
+        for b in main master; do
+            dot git rev-parse --verify "$b" &>/dev/null && BRANCH="$b" && break
+        done
+    fi
+    [ -n "$BRANCH" ] || die "Could not determine branch" "Re-run with: dot:clone <branch>"
+fi
+
+# Already checked out?
+CURRENT=$(dot git symbolic-ref --short HEAD 2>/dev/null || true)
+if [ "$CURRENT" = "$BRANCH" ] && [ -f "$HOME/.config/mise/mise.toml" ]; then
+    ok "Already on $BRANCH"
+else
+    set +e
+    CHECKOUT_OUTPUT=$(dot git checkout "$BRANCH" 2>&1)
+    CHECKOUT_RC=$?
+    set -e
+
+    if [ $CHECKOUT_RC -eq 0 ]; then
+        ok "Checked out $BRANCH"
+    elif echo "$CHECKOUT_OUTPUT" | grep -q "would be overwritten"; then
+        # Backup conflicting files, retry, restore as local modifications
+        BACKUP="$HOME/.dot-backup/$(date +%Y%m%d-%H%M%S)"
+        mkdir -p "$BACKUP"
+        CONFLICTS=$(echo "$CHECKOUT_OUTPUT" \
+            | sed -n '/would be overwritten/,/Please move or remove/{ /^\t/{ s/^\t//; p; } }')
+        while IFS= read -r f; do
+            [ -e "$HOME/$f" ] || continue
+            mkdir -p "$BACKUP/$(dirname "$f")"
+            mv "$HOME/$f" "$BACKUP/$f"
+        done <<< "$CONFLICTS"
+
+        dot git checkout "$BRANCH" || die "Checkout failed after backup"
+
+        while IFS= read -r f; do
+            [ -e "$BACKUP/$f" ] || continue
+            mkdir -p "$(dirname "$HOME/$f")"
+            cp "$BACKUP/$f" "$HOME/$f"
+        done <<< "$CONFLICTS"
+
+        ok "Checked out $BRANCH (conflicts backed up to $BACKUP)"
+        ok "Pre-existing files preserved — review with: dot git diff"
+    else
+        die "Checkout failed" "$CHECKOUT_OUTPUT"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 6. Shell integration
+# ---------------------------------------------------------------------------
+step "Shell"
+
+if grep -qF '.config/bash/config' "$HOME/.bashrc" 2>/dev/null; then
+    ok "bash config sourced from ~/.bashrc"
+else
+    echo 'source "$HOME/.config/bash/config"' >> "$HOME/.bashrc"
+    ok "Added bash config to ~/.bashrc"
+fi
+
+# ---------------------------------------------------------------------------
+# 7. Install tools + bootstrap
+# ---------------------------------------------------------------------------
+step "Bootstrap"
+
+export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
+eval "$("$HOME/.local/bin/mise" activate bash)" 2>/dev/null || true
+
+mise install && ok "Tools installed"
+mise use -g usage lefthook && ok "Registered usage + lefthook globally"
+mise run dot:bootstrap 2>&1 && ok "Platform config + git hooks + local.toml"
+
+# ---------------------------------------------------------------------------
+# Done
+# ---------------------------------------------------------------------------
+step "Done!"
+echo ""
+echo "  Next steps:"
+echo "    exec bash                  # reload shell"
+echo "    mise run dot:setup         # brew, fish, completions"
+echo "    exec fish                  # switch to fish"
+echo ""
