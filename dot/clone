@@ -72,10 +72,11 @@ else
         confirm "Install mise now?" || die "mise is required"
     fi
     curl https://mise.run | sh
-    export PATH="$HOME/.local/bin:$PATH"
-    eval "$("$HOME/.local/bin/mise" activate bash)"
     command -v mise &>/dev/null && ok "mise installed" || die "mise install failed"
 fi
+
+export PATH="$HOME/.local/bin:$PATH"
+eval "$("$HOME/.local/bin/mise" activate bash)"
 
 if command -v op &>/dev/null; then
     ok "op"
