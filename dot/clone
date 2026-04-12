@@ -31,8 +31,15 @@ OP_GITHUB_TOKEN="op://Personal/github.com/MISE_GITHUB_TOKEN"
 # Helpers
 # ---------------------------------------------------------------------------
 ok()   { printf '  \342\234\205 %s\n' "$*"; }
+warn() { printf '  \342\235\214 %s\n' "$1"; shift; for h in "$@"; do printf '     %s\n' "$h"; done; }
 die()  { printf '  \342\235\214 %s\n' "$1"; shift; for h in "$@"; do printf '     %s\n' "$h"; done; exit 1; }
 step() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+confirm() {
+    local prompt="$1"
+    printf '     %s [y/N] ' "$prompt"
+    read -r reply </dev/tty
+    [[ "$reply" =~ ^[Yy]$ ]]
+}
 
 dot() { GIT_DIR="$DOT_DIR" GIT_WORK_TREE="$HOME" "$@"; }
 
@@ -41,9 +48,27 @@ dot() { GIT_DIR="$DOT_DIR" GIT_WORK_TREE="$HOME" "$@"; }
 # ---------------------------------------------------------------------------
 step "Prerequisites"
 
-command -v git  &>/dev/null && ok "git"  || die "git not found"  "Install via your package manager"
-command -v mise &>/dev/null && ok "mise" || die "mise not found" "curl https://mise.run | sh" "eval \"\$(mise activate bash)\""
-command -v op   &>/dev/null && ok "op"   || die "op not found"   "mise use -g 1password"
+command -v git &>/dev/null && ok "git" || die "git not found" "Install via your package manager"
+
+if command -v mise &>/dev/null; then
+    ok "mise"
+else
+    warn "mise not found" "curl https://mise.run | sh" "eval \"\$(mise activate bash)\""
+    confirm "Install mise now?" || die "mise is required"
+    curl https://mise.run | sh
+    export PATH="$HOME/.local/bin:$PATH"
+    eval "$("$HOME/.local/bin/mise" activate bash)"
+    command -v mise &>/dev/null && ok "mise installed" || die "mise install failed"
+fi
+
+if command -v op &>/dev/null; then
+    ok "op"
+else
+    warn "op not found" "mise use -g 1password"
+    confirm "Install 1Password CLI (op) now?" || die "op is required"
+    mise use -g 1password
+    command -v op &>/dev/null && ok "op installed" || die "op install failed"
+fi
 
 op whoami &>/dev/null && ok "1Password signed in" \
     || die "Not signed in to 1Password" "eval \"\$(op signin)\""
@@ -72,6 +97,13 @@ else
                "eval \"\$(ssh-agent -s)\"" \
                "ssh-add <(op read \"$OP_SSH_KEY\")"
     ok "SSH key loaded from 1Password"
+
+    mkdir -p "$HOME/.ssh"
+    chmod 700 "$HOME/.ssh"
+    ssh-keygen -y -f <(op read "$OP_SSH_KEY") > "$HOME/.ssh/haijock.pub" 2>/dev/null \
+        || die "Could not extract public key from private key"
+    chmod 600 "$HOME/.ssh/haijock.pub"
+    ok "Public key saved to ~/.ssh/haijock.pub"
 
     check_ssh || die "GitHub SSH failed" "ssh -T git@github.com"
     ok "GitHub SSH verified"
