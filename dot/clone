@@ -5,14 +5,13 @@
 # a hint. Safe to re-run at any point.
 #
 # Usage:
-#   bash clone [branch]                           # run directly
-#   curl -fsSL https://haijock.github.io/dot/clone | bash  # remote
-#   mise run dot:clone [branch]                   # after checkout
+#   bash clone [--interactive|-i] [branch]        # run directly
+#   curl -fsSL https://haijock.github.io/dot/clone | bash  # remote (non-interactive)
+#   mise run dot:clone [-- --interactive] [branch] # after checkout
 #
-# Prerequisites (install manually, the script checks for them):
-#   curl https://mise.run | sh && eval "$(mise activate bash)"
-#   mise use -g 1password
-#   eval "$(op signin)"
+# By default the script runs non-interactively: missing tools (mise, op) are
+# installed automatically without confirmation prompts. Pass --interactive
+# (or -i) to be prompted before each auto-install.
 #
 #MISE description="Clone dotfiles into $HOME using 1Password for authentication"
 
@@ -23,7 +22,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 REPO="git@github.com:haijock/dotfiles.git"
 DOT_DIR="$HOME/.dot"
-BRANCH="${1:-}"
+BRANCH=""
+INTERACTIVE=false
 OP_SSH_KEY="op://Personal/haijock_gmail.com/private key?ssh-format=openssh"
 OP_GITHUB_TOKEN="op://Personal/github.com/MISE_GITHUB_TOKEN"
 
@@ -44,6 +44,20 @@ confirm() {
 dot() { GIT_DIR="$DOT_DIR" GIT_WORK_TREE="$HOME" "$@"; }
 
 # ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --interactive|-i) INTERACTIVE=true; shift ;;
+        --) shift; break ;;
+        -*) die "Unknown flag: $1" "Usage: clone [--interactive|-i] [branch]" ;;
+        *)  BRANCH="$1"; shift ;;
+    esac
+done
+# Capture any remaining positional arg after -- as the branch
+[[ $# -gt 0 && -z "$BRANCH" ]] && BRANCH="$1"
+
+# ---------------------------------------------------------------------------
 # 1. Prerequisites
 # ---------------------------------------------------------------------------
 step "Prerequisites"
@@ -54,7 +68,9 @@ if command -v mise &>/dev/null; then
     ok "mise"
 else
     warn "mise not found" "curl https://mise.run | sh" "eval \"\$(mise activate bash)\""
-    confirm "Install mise now?" || die "mise is required"
+    if [[ "$INTERACTIVE" == true ]]; then
+        confirm "Install mise now?" || die "mise is required"
+    fi
     curl https://mise.run | sh
     export PATH="$HOME/.local/bin:$PATH"
     eval "$("$HOME/.local/bin/mise" activate bash)"
@@ -65,19 +81,15 @@ if command -v op &>/dev/null; then
     ok "op"
 else
     warn "op not found" "mise use -g 1password"
-    confirm "Install 1Password CLI (op) now?" || die "op is required"
+    if [[ "$INTERACTIVE" == true ]]; then
+        confirm "Install 1Password CLI (op) now?" || die "op is required"
+    fi
     mise use -g 1password
     command -v op &>/dev/null && ok "op installed" || die "op install failed"
 fi
 
-if op whoami &>/dev/null; then
-    ok "1Password signed in"
-else
-    warn "Not signed in to 1Password" "eval \"\$(op signin)\""
-    confirm "Sign in to 1Password now?" || die "1Password sign-in is required"
-    eval "$(op signin)" </dev/tty
-    op whoami &>/dev/null && ok "1Password signed in" || die "1Password sign-in failed"
-fi
+op whoami &>/dev/null && ok "1Password signed in" \
+    || die "Not signed in to 1Password" "eval \"\$(op signin)\""
 
 # ---------------------------------------------------------------------------
 # 2. SSH access
@@ -165,7 +177,7 @@ fi
 
 # Already checked out?
 CURRENT=$(dot git symbolic-ref --short HEAD 2>/dev/null || true)
-if [ "$CURRENT" = "$BRANCH" ] && [ -f "$HOME/.config/mise/mise.toml" ]; then
+if [ "$CURRENT" = "$BRANCH" ] && [ -f "$HOME/.config/mise/conf.d/dot.toml" ]; then
     ok "Already on $BRANCH"
 else
     set +e
