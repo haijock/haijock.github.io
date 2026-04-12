@@ -70,8 +70,14 @@ else
     command -v op &>/dev/null && ok "op installed" || die "op install failed"
 fi
 
-op whoami &>/dev/null && ok "1Password signed in" \
-    || die "Not signed in to 1Password" "eval \"\$(op signin)\""
+if op whoami &>/dev/null; then
+    ok "1Password signed in"
+else
+    warn "Not signed in to 1Password" "eval \"\$(op signin)\""
+    confirm "Sign in to 1Password now?" || die "1Password sign-in is required"
+    eval "$(op signin)" </dev/tty
+    op whoami &>/dev/null && ok "1Password signed in" || die "1Password sign-in failed"
+fi
 
 # ---------------------------------------------------------------------------
 # 2. SSH access
