@@ -72,6 +72,7 @@ else
         confirm "Install mise now?" || die "mise is required"
     fi
     curl https://mise.run | sh
+    export PATH="$HOME/.local/bin:$PATH"
     command -v mise &>/dev/null && ok "mise installed" || die "mise install failed"
 fi
 
