@@ -102,36 +102,33 @@ op whoami &>/dev/null && ok "1Password signed in" \
 # ---------------------------------------------------------------------------
 step "SSH access"
 
-check_ssh() {
-    local output
-    output=$(ssh -T git@github.com </dev/null 2>&1) || true
-    echo "$output" | grep -q "successfully authenticated"
-}
+eval "$(ssh-agent -s)"
+export SSH_AUTH_SOCK SSH_AGENT_PID
+_our_ssh_sock="$SSH_AUTH_SOCK"
 
-if check_ssh; then
-    ok "GitHub SSH verified"
-else
-    # Start agent if none running
-    if ! ssh-add -l &>/dev/null 2>&1; then
-        [ -z "${SSH_AUTH_SOCK:-}" ] && eval "$(ssh-agent -s)" >/dev/null 2>&1
-    fi
-    # Load key from 1Password
-    ssh-add <(op read "$OP_SSH_KEY") 2>/dev/null \
-        || die "Could not load SSH key from 1Password" \
-               "eval \"\$(ssh-agent -s)\"" \
-               "ssh-add <(op read \"$OP_SSH_KEY\")"
-    ok "SSH key loaded from 1Password"
+ssh-add <(op read "$OP_SSH_KEY") 2>/dev/null \
+    || die "Could not load SSH key from 1Password" \
+           "eval \"\$(ssh-agent -s)\"" \
+           "ssh-add <(op read \"$OP_SSH_KEY\")"
+ok "SSH key loaded from 1Password"
 
-    mkdir -p "$HOME/.ssh"
-    chmod 700 "$HOME/.ssh"
-    ssh-keygen -y -f <(op read "$OP_SSH_KEY") > "$HOME/.ssh/haijock.pub" 2>/dev/null \
-        || die "Could not extract public key from private key"
-    chmod 600 "$HOME/.ssh/haijock.pub"
-    ok "Public key saved to ~/.ssh/haijock.pub"
+mkdir -p "$HOME/.ssh"
+chmod 700 "$HOME/.ssh"
+ssh-keygen -y -f <(op read "$OP_SSH_KEY") > "$HOME/.ssh/haijock.pub" 2>/dev/null \
+    || die "Could not extract public key from private key"
+chmod 600 "$HOME/.ssh/haijock.pub"
+ok "Public key saved to ~/.ssh/haijock.pub"
 
-    check_ssh || die "GitHub SSH failed" "ssh -T git@github.com"
-    ok "GitHub SSH verified"
-fi
+export SSH_AUTH_SOCK="$_our_ssh_sock"
+set +e
+(
+    export SSH_AUTH_SOCK="$_our_ssh_sock"
+    export SSH_AGENT_PID="$SSH_AGENT_PID"
+    unset SSH_CONNECTION
+    exec ssh -o BatchMode=yes -T git@github.com
+) 2>&1 | grep -q "successfully authenticated"
+set -e
+ok "GitHub SSH verified"
 
 # ---------------------------------------------------------------------------
 # 3. GitHub token
