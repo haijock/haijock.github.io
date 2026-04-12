@@ -97,7 +97,10 @@ else
 fi
 
 "$OP" whoami &>/dev/null && ok "1Password signed in" \
-    || die "Not signed in to 1Password" "eval \"\$($OP signin)\""
+    || die "Not signed in to 1Password" \
+           "eval \"\$(~/.local/bin/mise activate bash)\"" \
+           "eval \"\$(op signin)\"" \
+           "Then re-run this script"
 
 # ---------------------------------------------------------------------------
 # 2. SSH access
