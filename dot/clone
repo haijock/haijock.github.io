@@ -77,12 +77,9 @@ else
 fi
 
 export PATH="$HOME/.local/bin:$PATH"
+eval "$("$HOME/.local/bin/mise" activate bash)"
 
-OP=""
-resolve_op() { OP="$("$HOME/.local/bin/mise" which op 2>/dev/null || true)"; }
-
-resolve_op
-if [ -n "$OP" ]; then
+if command -v op &>/dev/null; then
     ok "op"
 else
     warn "op not found" "mise use -g 1password"
@@ -90,13 +87,11 @@ else
         confirm "Install 1Password CLI (op) now?" || die "op is required"
     fi
     "$HOME/.local/bin/mise" use -g 1password
-    resolve_op
-    [ -n "$OP" ] && ok "op installed" || die "op install failed" \
-        "mise use -g 1password" \
-        "Then re-run: curl -fsSL https://haijock.github.io/dot/clone | bash"
+    eval "$("$HOME/.local/bin/mise" activate bash)"
+    command -v op &>/dev/null && ok "op installed" || die "op install failed"
 fi
 
-"$OP" whoami &>/dev/null && ok "1Password signed in" \
+op whoami &>/dev/null && ok "1Password signed in" \
     || die "Not signed in to 1Password" \
            "eval \"\$(~/.local/bin/mise activate bash)\"" \
            "eval \"\$(op signin)\"" \
@@ -121,15 +116,15 @@ else
         [ -z "${SSH_AUTH_SOCK:-}" ] && eval "$(ssh-agent -s)" >/dev/null 2>&1
     fi
     # Load key from 1Password
-    ssh-add <("$OP" read "$OP_SSH_KEY") 2>/dev/null \
+    ssh-add <(op read "$OP_SSH_KEY") 2>/dev/null \
         || die "Could not load SSH key from 1Password" \
                "eval \"\$(ssh-agent -s)\"" \
-               "ssh-add <($OP read \"$OP_SSH_KEY\")"
+               "ssh-add <(op read \"$OP_SSH_KEY\")"
     ok "SSH key loaded from 1Password"
 
     mkdir -p "$HOME/.ssh"
     chmod 700 "$HOME/.ssh"
-    ssh-keygen -y -f <("$OP" read "$OP_SSH_KEY") > "$HOME/.ssh/haijock.pub" 2>/dev/null \
+    ssh-keygen -y -f <(op read "$OP_SSH_KEY") > "$HOME/.ssh/haijock.pub" 2>/dev/null \
         || die "Could not extract public key from private key"
     chmod 600 "$HOME/.ssh/haijock.pub"
     ok "Public key saved to ~/.ssh/haijock.pub"
@@ -146,7 +141,7 @@ step "GitHub token"
 if [ -f "$HOME/.env" ] && grep -q '^MISE_GITHUB_TOKEN=.' "$HOME/.env" 2>/dev/null; then
     ok "MISE_GITHUB_TOKEN in ~/.env"
 else
-    TOKEN=$("$OP" read "$OP_GITHUB_TOKEN" 2>/dev/null) \
+    TOKEN=$(op read "$OP_GITHUB_TOKEN" 2>/dev/null) \
         || die "Could not read token from 1Password" \
                "Ensure it exists at: $OP_GITHUB_TOKEN"
     echo "MISE_GITHUB_TOKEN=$TOKEN" >> "$HOME/.env"
