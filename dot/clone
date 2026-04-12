@@ -55,7 +55,7 @@ step "SSH access"
 
 check_ssh() {
     local output
-    output=$(ssh -T git@github.com 2>&1) || true
+    output=$(ssh -T git@github.com </dev/null 2>&1) || true
     echo "$output" | grep -q "successfully authenticated"
 }
 
