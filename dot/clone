@@ -87,6 +87,7 @@ else
         confirm "Install 1Password CLI (op) now?" || die "op is required"
     fi
     mise use -g 1password
+    eval "$("$HOME/.local/bin/mise" activate bash)"
     command -v op &>/dev/null && ok "op installed" || die "op install failed"
 fi
 
